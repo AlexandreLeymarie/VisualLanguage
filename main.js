@@ -215,6 +215,12 @@ startSplit.falseOutputSlot.connect(printNode2.controlInputSlot);
 startSplit.execute();
 
 
+const BACKGROUND_COL = "#0B1020";
+const NODE_BACKGROUND_COL = "#17243A";
+const STROKE_COL = "#526783";
+const SLOT_TEXT_COL = "#A9B9D0";
+const NODE_TEXT_COL = "#F1F5F9";
+
 const cv = document.getElementById("canvas");
 const ctx = cv.getContext("2d");
 cv.width = 800;
@@ -227,14 +233,14 @@ let canvasToWorld=(p,cam)=>p.sub(vec(cv.width/2,cv.height/2)).mul(1/cam.zoom).ad
 class Space{
     constructor(){
         this.cam = {pos: vec(0, 0), zoom: 1};
-        this.nodes = [a, b, str, printNode, printNode2, equalityNode, startSplit];
+        this.nodes = [a, b, sum, double, str, printNode, printNode2, equalityNode, startSplit];
         this.nodeVisuals = [];
         for(let node of this.nodes){
             this.nodeVisuals.push(new NodeVisual(node, vec(Math.random()*800-400, Math.random()*500-250)));
         }
     }
     draw(){
-        ctx.fillStyle = "rgba(20, 20, 30)";
+        ctx.fillStyle = BACKGROUND_COL;
         ctx.fillRect(0, 0, cv.width, cv.height);
         for(let nodeVisual of this.nodeVisuals){
             nodeVisual.draw(this.cam);
@@ -259,12 +265,12 @@ class NodeVisual{
         let centerSp = worldToCanvas(this.pos, cam);
         ctx.beginPath();
         ctx.roundRect(cornerSp.x, cornerSp.y, this.size.x*cam.zoom, this.size.y*cam.zoom, cam.zoom*10);
-        ctx.fillStyle = "rgba(20, 20, 60, 1)";
+        ctx.fillStyle = NODE_BACKGROUND_COL;
         ctx.fill();
-        ctx.strokeStyle = "white";
+        ctx.strokeStyle = STROKE_COL;
         ctx.lineWidth = cam.zoom*2;
         ctx.stroke();
-        ctx.fillStyle = "white";
+        ctx.fillStyle = NODE_TEXT_COL;
         ctx.font = (cam.zoom*16)+"px Helvetica";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle"
@@ -302,9 +308,9 @@ class SlotVisual{
         let sp = worldToCanvas(pos, cam);
         ctx.beginPath();
         ctx.arc(sp.x, sp.y, cam.zoom*this.radius, 0, Math.PI*2);
-        ctx.fillStyle = "white";
+        ctx.fillStyle = STROKE_COL;
         ctx.fill();
-        ctx.fillStyle = "rgba(255, 255, 255, .4)";
+        ctx.fillStyle = SLOT_TEXT_COL;
         let textSideSign = shift.x < 0 ? -1 : 1;
         ctx.textAlign = shift.x < 0 ? "right" : "left";
         ctx.fillText(this.slot.name, sp.x+this.radius*textSideSign, sp.y);
