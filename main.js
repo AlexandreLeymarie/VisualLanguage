@@ -25,8 +25,12 @@ startSplit.conditionSlot.connect(equalityNode.outputSlot);
 startSplit.trueOutputSlot.connect(printNode.controlInputSlot);
 startSplit.falseOutputSlot.connect(printNode2.controlInputSlot);
 
-const nodes = [a, b, sum, double, str, printNode, printNode2, equalityNode, startSplit];
+const nodes = [a, b, sum, double, str, printNode, doubleStr, printNode2, equalityNode, startSplit];
 startSplit.execute();
 
 const space = new Space(nodes);
-space.draw();
+function render(){
+    space.draw();
+    requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
