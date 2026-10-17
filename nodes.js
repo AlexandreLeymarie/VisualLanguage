@@ -180,7 +180,7 @@ class SplitNode extends Node{
     constructor(){
         super();
         this.name = "split"
-        this.conditionSlot = new Slot(this, StringType, DIRECTIONS.INPUT, "condition");
+        this.conditionSlot = new Slot(this, BoolType, DIRECTIONS.INPUT, "condition");
         this.controlInputSlot = new Slot(this, ControlType, DIRECTIONS.INPUT, "controlInput");
         this.trueOutputSlot = new Slot(this, ControlType, DIRECTIONS.OUTPUT, "true");
         this.falseOutputSlot = new Slot(this, ControlType, DIRECTIONS.OUTPUT, "false");
