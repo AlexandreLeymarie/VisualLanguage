@@ -18,13 +18,17 @@ class Space{
         this.cam = {pos: vec(0, 0), zoom: 1};
         this.nodes = nodes;
         this.nodeVisuals = [];
+        this.slotVisuals = new Map();
         for(let node of this.nodes){
-            this.nodeVisuals.push(new NodeVisual(node, vec(Math.random()*800-400, Math.random()*500-250)));
+            this.nodeVisuals.push(new NodeVisual(node, vec(Math.random()*800-400, Math.random()*500-250), this));
         }
     }
     draw(){
         ctx.fillStyle = BACKGROUND_COL;
         ctx.fillRect(0, 0, cv.width, cv.height);
+        for(let slotVisual of this.slotVisuals.values()){
+            slotVisual.drawConnections(this.cam);
+        }
         for(let nodeVisual of this.nodeVisuals){
             nodeVisual.draw(this.cam);
         }
@@ -32,14 +36,16 @@ class Space{
 }
 const cam = {}
 class NodeVisual{
-    constructor(node, pos){
+    constructor(node, pos, space){
         this.node = node;
         this.pos = pos;
         this.size = vec(64, 64);
         this.sloteVisuals = [];
         let a = -Math.PI*2/3;
         for(let slot of this.node.slots){
-            this.sloteVisuals.push(new SlotVisual(slot, this, a));
+            const slotVisual = new SlotVisual(slot, this, a, space);
+            this.sloteVisuals.push(slotVisual);
+            space.slotVisuals.set(slot, slotVisual);
             a += 1;
         }
     }
@@ -79,11 +85,31 @@ function getRectEdgePosition(size, angle) {
 }
 
 class SlotVisual{
-    constructor(slot, nodeVisual, angle){
+    constructor(slot, nodeVisual, angle, space){
         this.slot = slot;
         this.nodeVisual = nodeVisual;
         this.angle = angle;
         this.radius = 5;
+        this.space = space;
+    }
+    getPosition(){
+        let shift = getRectEdgePosition(this.nodeVisual.size.add(vec(this.radius*2+4)), this.angle);
+        return this.nodeVisual.pos.add(shift);
+    }
+    drawConnections(cam){
+        if(this.slot.direction !== DIRECTIONS.INPUT) return;
+        const start = worldToCanvas(this.getPosition(), cam);
+        for(let connectedSlot of this.slot.connectedSlots){
+            const connectedVisual = this.space.slotVisuals.get(connectedSlot);
+            if(connectedVisual === undefined) continue;
+            const end = worldToCanvas(connectedVisual.getPosition(), cam);
+            ctx.beginPath();
+            ctx.moveTo(start.x, start.y);
+            ctx.lineTo(end.x, end.y);
+            ctx.strokeStyle = STROKE_COL;
+            ctx.lineWidth = cam.zoom*2;
+            ctx.stroke();
+        }
     }
     draw(cam){
         let shift = getRectEdgePosition(this.nodeVisual.size.add(vec(this.radius*2+4)), this.angle);
