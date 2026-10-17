@@ -15,20 +15,33 @@ class Slot{
         this.direction = direction;
         this.value = null;
         
-        this.connectedSlot = null;
+        this.connectedSlots = [];
     }
     connect(slot){
-        this.connectedSlot = slot; // ahhh connect should connect both ways! But also, some slots can have multiple connections!!
+        if(!this.canConnectToSlot(slot)) return false;
+
+        const inputSlot = this.direction === DIRECTIONS.INPUT ? this : slot;
+        if(inputSlot.type !== ControlType && inputSlot.connectedSlots.length > 0){
+            inputSlot.disconnect();
+        }
+
+        if(!this.connectedSlots.includes(slot)) this.connectedSlots.push(slot);
+        if(!slot.connectedSlots.includes(this)) slot.connectedSlots.push(this);
+        return true;
     }
-    disconnect(){
-        this.connectedSlot = null;
+    disconnect(slot = null){
+        const slotsToDisconnect = slot === null ? [...this.connectedSlots] : [slot];
+        for(let connectedSlot of slotsToDisconnect){
+            this.connectedSlots = this.connectedSlots.filter(connected => connected !== connectedSlot);
+            connectedSlot.connectedSlots = connectedSlot.connectedSlots.filter(connected => connected !== this);
+        }
     }
     canConnectToSlot(slot){
-        return slot.direction !== this.direction && slot.type === this.type;
+        return slot instanceof Slot && slot.direction !== this.direction && slot.type === this.type;
     }
     getValue(){
         if(this.direction == DIRECTIONS.INPUT){
-            if(this.connectedSlot !== null) return this.connectedSlot.getValue();
+            if(this.connectedSlots.length > 0) return this.connectedSlots[0].getValue();
             return null;
         } else {
             return this.value;
@@ -157,8 +170,8 @@ class PrintNode extends Node{
         let value = this.valueSlot.getValue();
         if(value === null) return;
         console.log(value);
-        if(this.controlOutputSlot.connectedSlot !== null){
-            this.controlOutputSlot.connectedSlot.node.execute();
+        for(let connectedSlot of [...this.controlOutputSlot.connectedSlots]){
+            connectedSlot.node.execute();
         }
     }
 }
@@ -177,9 +190,13 @@ class SplitNode extends Node{
         let value = this.conditionSlot.getValue();
         if(value === null) return;
         if(value){
-            if(this.trueOutputSlot.connectedSlot !== null) this.trueOutputSlot.connectedSlot.node.execute();
+            for(let connectedSlot of [...this.trueOutputSlot.connectedSlots]){
+                connectedSlot.node.execute();
+            }
         } else {
-            if(this.falseOutputSlot.connectedSlot !== null) this.falseOutputSlot.connectedSlot.node.execute();
+            for(let connectedSlot of [...this.falseOutputSlot.connectedSlots]){
+                connectedSlot.node.execute();
+            }
         }
     }
 }
