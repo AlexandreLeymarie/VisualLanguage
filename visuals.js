@@ -3,6 +3,8 @@ const NODE_BACKGROUND_COL = "#17243A";
 const STROKE_COL = "#526783";
 const SLOT_TEXT_COL = "#A9B9D0";
 const NODE_TEXT_COL = "#F1F5F9";
+const SLOT_DRAG_PADDING = 3;
+const SLOT_HOVER_PADDING = 18;
 
 const cv = document.getElementById("canvas");
 const ctx = cv.getContext("2d");
@@ -33,6 +35,11 @@ class Space{
         }
         this.draggedNodeVisual = null;
         this.draggedSlotVisual = null;
+        this.connectingSlotVisual = null;
+        this.hoveredSlotVisual = null;
+        this.hoveredSlotCanDragAngle = false;
+        this.hoveredConnectionIsLegal = false;
+        this.pointerWorldPosition = null;
         this.dragOffset = vec();
         this.nodePickerOpen = false;
         this.hoveredPickerItem = null;
@@ -46,7 +53,11 @@ class Space{
         cv.addEventListener("pointercancel", this.onPointerUp.bind(this));
         cv.addEventListener("pointerleave", () => {
             this.hoveredPickerItem = null;
-            if(this.draggedNodeVisual === null && this.draggedSlotVisual === null) cv.style.cursor = "";
+            if(this.draggedNodeVisual === null && this.draggedSlotVisual === null && this.connectingSlotVisual === null){
+                this.hoveredSlotVisual = null;
+                this.hoveredSlotCanDragAngle = false;
+                cv.style.cursor = "";
+            }
         });
     }
     addNode(type){
@@ -127,6 +138,24 @@ class Space{
            position.y < menuY + 6 || position.y >= menuY + 6 + this.nodeTypes.length * rowHeight) return null;
         return Math.floor((position.y - menuY - 6) / rowHeight);
     }
+    getSlotVisualAt(position, extraRadius = 0, sourceSlotVisual = null, filterLegal = true){
+        let closest = null;
+        let closestDistance = Infinity;
+        for(let i = this.nodeVisuals.length - 1; i >= 0; i--){
+            const nodeVisual = this.nodeVisuals[i];
+            for(let j = nodeVisual.sloteVisuals.length - 1; j >= 0; j--){
+                const slotVisual = nodeVisual.sloteVisuals[j];
+                if(slotVisual === sourceSlotVisual) continue;
+                if(filterLegal && sourceSlotVisual && !sourceSlotVisual.slot.canConnectToSlot(slotVisual.slot)) continue;
+                const distance = position.sub(slotVisual.getPosition()).length();
+                if(distance <= slotVisual.radius + extraRadius && distance < closestDistance){
+                    closest = slotVisual;
+                    closestDistance = distance;
+                }
+            }
+        }
+        return closest;
+    }
     getWorldPointerPosition(event){
         const rect = cv.getBoundingClientRect();
         const canvasPosition = vec(
@@ -162,18 +191,31 @@ class Space{
             this.nodePickerOpen = false;
         }
         const pointerPosition = this.getWorldPointerPosition(event);
+        const directlyHitSlot = this.getSlotVisualAt(
+            pointerPosition,
+            SLOT_DRAG_PADDING / this.cam.zoom
+        );
+        if(directlyHitSlot !== null){
+            this.draggedSlotVisual = directlyHitSlot;
+            cv.setPointerCapture(event.pointerId);
+            cv.style.cursor = "grabbing";
+            event.preventDefault();
+            return;
+        }
+        const nearbySlot = this.getSlotVisualAt(
+            pointerPosition,
+            SLOT_HOVER_PADDING / this.cam.zoom
+        );
+        if(nearbySlot !== null){
+            this.connectingSlotVisual = nearbySlot;
+            this.pointerWorldPosition = pointerPosition;
+            cv.setPointerCapture(event.pointerId);
+            cv.style.cursor = "grabbing";
+            event.preventDefault();
+            return;
+        }
         for(let i = this.nodeVisuals.length - 1; i >= 0; i--){
             const nodeVisual = this.nodeVisuals[i];
-            for(let j = nodeVisual.sloteVisuals.length - 1; j >= 0; j--){
-                const slotVisual = nodeVisual.sloteVisuals[j];
-                if(pointerPosition.sub(slotVisual.getPosition()).length() <= slotVisual.radius + 3 / this.cam.zoom){
-                    this.draggedSlotVisual = slotVisual;
-                    cv.setPointerCapture(event.pointerId);
-                    cv.style.cursor = "grabbing";
-                    event.preventDefault();
-                    return;
-                }
-            }
             const halfSize = nodeVisual.size.mul(.5);
             if(Math.abs(pointerPosition.x - nodeVisual.pos.x) <= halfSize.x &&
                Math.abs(pointerPosition.y - nodeVisual.pos.y) <= halfSize.y){
@@ -193,8 +235,12 @@ class Space{
             (event.clientY - rect.top) * cv.height / rect.height
         );
         this.hoveredPickerItem = this.getPickerItemAt(screenPosition);
+        this.pointerWorldPosition = this.getWorldPointerPosition(event);
         if(this.draggedSlotVisual !== null){
-            const pointerPosition = this.getWorldPointerPosition(event);
+            this.hoveredSlotVisual = null;
+            this.hoveredSlotCanDragAngle = false;
+            this.hoveredConnectionIsLegal = false;
+            const pointerPosition = this.pointerWorldPosition;
             const nodePosition = this.draggedSlotVisual.nodeVisual.pos;
             this.draggedSlotVisual.angle = Math.atan2(
                 pointerPosition.y - nodePosition.y,
@@ -202,12 +248,30 @@ class Space{
             );
             return;
         }
+        this.hoveredSlotVisual = this.getSlotVisualAt(
+            this.pointerWorldPosition,
+            SLOT_HOVER_PADDING / this.cam.zoom,
+            this.connectingSlotVisual,
+            this.connectingSlotVisual === null
+        );
+        this.hoveredConnectionIsLegal = this.connectingSlotVisual !== null &&
+            this.hoveredSlotVisual !== null &&
+            this.connectingSlotVisual.slot.canConnectToSlot(this.hoveredSlotVisual.slot);
+        this.hoveredSlotCanDragAngle = this.connectingSlotVisual === null &&
+            this.hoveredSlotVisual !== null &&
+            this.pointerWorldPosition.sub(this.hoveredSlotVisual.getPosition()).length() <=
+                this.hoveredSlotVisual.radius + SLOT_DRAG_PADDING / this.cam.zoom;
+        if(this.connectingSlotVisual !== null) return;
         if(this.draggedNodeVisual !== null){
             this.draggedNodeVisual.pos = this.getWorldPointerPosition(event).add(this.dragOffset);
             return;
         }
         if(this.hoveredPickerItem !== null){
             cv.style.cursor = "pointer";
+            return;
+        }
+        if(this.hoveredSlotVisual !== null){
+            cv.style.cursor = "grab";
             return;
         }
 
@@ -217,7 +281,7 @@ class Space{
             const nodeVisual = this.nodeVisuals[i];
             for(let j = nodeVisual.sloteVisuals.length - 1; j >= 0; j--){
                 const slotVisual = nodeVisual.sloteVisuals[j];
-                if(pointerPosition.sub(slotVisual.getPosition()).length() <= slotVisual.radius + 3 / this.cam.zoom){
+                if(pointerPosition.sub(slotVisual.getPosition()).length() <= slotVisual.radius + SLOT_DRAG_PADDING / this.cam.zoom){
                     isOverDraggable = true;
                     break;
                 }
@@ -231,9 +295,19 @@ class Space{
         cv.style.cursor = isOverDraggable ? "grab" : "";
     }
     onPointerUp(event){
-        if(this.draggedNodeVisual === null && this.draggedSlotVisual === null) return;
+        if(this.draggedNodeVisual === null && this.draggedSlotVisual === null && this.connectingSlotVisual === null) return;
+        if(this.connectingSlotVisual !== null){
+            this.onPointerMove(event);
+            const targetSlotVisual = this.getSlotVisualAt(
+                this.pointerWorldPosition,
+                SLOT_DRAG_PADDING / this.cam.zoom,
+                this.connectingSlotVisual
+            );
+            if(targetSlotVisual !== null) this.connectingSlotVisual.slot.connect(targetSlotVisual.slot);
+        }
         this.draggedNodeVisual = null;
         this.draggedSlotVisual = null;
+        this.connectingSlotVisual = null;
         if(cv.hasPointerCapture(event.pointerId)) cv.releasePointerCapture(event.pointerId);
         cv.style.cursor = "";
         this.onPointerMove(event);
@@ -243,6 +317,16 @@ class Space{
         ctx.fillRect(0, 0, cv.width, cv.height);
         for(let slotVisual of this.slotVisuals.values()){
             slotVisual.drawConnections(this.cam);
+        }
+        if(this.connectingSlotVisual !== null && this.pointerWorldPosition !== null){
+            const start = worldToCanvas(this.connectingSlotVisual.getPosition(), this.cam);
+            const end = worldToCanvas(this.pointerWorldPosition, this.cam);
+            ctx.beginPath();
+            ctx.moveTo(start.x, start.y);
+            ctx.lineTo(end.x, end.y);
+            ctx.strokeStyle = "#F1F5F9";
+            ctx.lineWidth = this.cam.zoom * 2;
+            ctx.stroke();
         }
         for(let nodeVisual of this.nodeVisuals){
             nodeVisual.draw(this.cam);
@@ -356,9 +440,22 @@ class SlotVisual{
         let pos = this.getPosition();
         let shift = pos.sub(this.nodeVisual.pos);
         let sp = worldToCanvas(pos, cam);
+        const isAngleDragging = this.space.draggedSlotVisual === this;
+        const isConnecting = this.space.connectingSlotVisual === this;
+        const isHoveredForAngle = this.space.hoveredSlotVisual === this && this.space.hoveredSlotCanDragAngle;
+        const isHoveredForConnection = this.space.hoveredSlotVisual === this && !this.space.hoveredSlotCanDragAngle;
+        if(isConnecting || (isHoveredForConnection && !isAngleDragging)){
+            ctx.beginPath();
+            ctx.arc(sp.x, sp.y, cam.zoom * this.radius + 3, 0, Math.PI*2);
+            ctx.fillStyle = isHoveredForConnection && this.space.connectingSlotVisual !== null &&
+                !this.space.hoveredConnectionIsLegal
+                ? "#EF4444"
+                : "#FFFFFF";
+            ctx.fill();
+        }
         ctx.beginPath();
         ctx.arc(sp.x, sp.y, cam.zoom*this.radius, 0, Math.PI*2);
-        ctx.fillStyle = STROKE_COL;
+        ctx.fillStyle = isAngleDragging || isHoveredForAngle ? "#FFFFFF" : STROKE_COL;
         ctx.fill();
         ctx.fillStyle = SLOT_TEXT_COL;
         let textSideSign = shift.x < 0 ? -1 : 1;
