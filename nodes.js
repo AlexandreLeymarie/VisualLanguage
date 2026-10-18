@@ -74,6 +74,7 @@ class Node{
 }
 
 class NumberNode extends Node{
+    static displayName = "Number";
     constructor(value){
         super();
         this.name = String(value);
@@ -200,4 +201,13 @@ class SplitNode extends Node{
         }
     }
 }
+
+const NODE_TYPES = [
+    NumberNode,
+    AddNode,
+    EqualityNode,
+    NumberToStringNode,
+    PrintNode,
+    SplitNode
+];
 

@@ -1,4 +1,4 @@
-let a = new NumberNode(2);
+/*let a = new NumberNode(2);
 let b = new NumberNode(3);
 let sum = new AddNode();
 sum.aSlot.connect(a.valueSlot);
@@ -26,7 +26,8 @@ startSplit.trueOutputSlot.connect(printNode.controlInputSlot);
 startSplit.falseOutputSlot.connect(printNode2.controlInputSlot);
 
 const nodes = [a, b, sum, double, str, printNode, doubleStr, printNode2, equalityNode, startSplit];
-startSplit.execute();
+startSplit.execute();*/
+const nodes = [];
 
 const space = new Space(nodes);
 function render(){

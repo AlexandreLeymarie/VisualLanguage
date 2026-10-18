@@ -9,8 +9,17 @@ const ctx = cv.getContext("2d");
 cv.width = 800;
 cv.height = 600;
 
+function resizeCanvas(){
+    const rect = cv.getBoundingClientRect();
+    cv.width = Math.max(1, Math.round(rect.width));
+    cv.height = Math.max(1, Math.round(rect.height));
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
 let worldToCanvas=(p,cam)=>p.sub(cam.pos).mul(cam.zoom).add(vec(cv.width/2,cv.height/2))
 let canvasToWorld=(p,cam)=>p.sub(vec(cv.width/2,cv.height/2)).mul(1/cam.zoom).add(cam.pos)
+const NODE_PICKER = {x: 16, y: 16, buttonWidth: 132, buttonHeight: 48, menuY: 76, menuWidth: 190, rowHeight: 32};
 
 
 class Space{
@@ -25,10 +34,98 @@ class Space{
         this.draggedNodeVisual = null;
         this.draggedSlotVisual = null;
         this.dragOffset = vec();
+        this.nodePickerOpen = false;
+        this.hoveredPickerItem = null;
+        this.nodeTypes = NODE_TYPES.map(NodeType => ({
+            NodeType,
+            name: NodeType.displayName || new NodeType().name
+        }));
         cv.addEventListener("pointerdown", this.onPointerDown.bind(this));
         cv.addEventListener("pointermove", this.onPointerMove.bind(this));
         cv.addEventListener("pointerup", this.onPointerUp.bind(this));
         cv.addEventListener("pointercancel", this.onPointerUp.bind(this));
+        cv.addEventListener("pointerleave", () => {
+            this.hoveredPickerItem = null;
+            if(this.draggedNodeVisual === null && this.draggedSlotVisual === null) cv.style.cursor = "";
+        });
+    }
+    addNode(type){
+        let node;
+        if(type.NodeType === NumberNode){
+            const rawValue = window.prompt("Enter a number:");
+            if(rawValue === null || rawValue.trim() === "") return;
+            const value = Number(rawValue);
+            if(!Number.isFinite(value)){
+                window.alert("Please enter a valid finite number.");
+                return;
+            }
+            node = new NumberNode(value);
+        } else {
+            node = new type.NodeType();
+        }
+        if(node === null) return;
+        this.nodes.push(node);
+        this.nodeVisuals.push(new NodeVisual(node, this.cam.pos.copy(), this));
+    }
+    drawNodePicker(){
+        const {x, y, buttonWidth, buttonHeight, menuY, menuWidth, rowHeight} = NODE_PICKER;
+        ctx.beginPath();
+        ctx.roundRect(x, y, buttonWidth, buttonHeight, 8);
+        ctx.fillStyle = this.hoveredPickerItem === "button" ? "#293D59" : NODE_BACKGROUND_COL;
+        ctx.fill();
+        ctx.strokeStyle = STROKE_COL;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.strokeStyle = NODE_TEXT_COL;
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        if(this.nodePickerOpen){
+            ctx.moveTo(x + 15, y + buttonHeight/2 - 5);
+            ctx.lineTo(x + 25, y + buttonHeight/2 + 5);
+            ctx.moveTo(x + 25, y + buttonHeight/2 - 5);
+            ctx.lineTo(x + 15, y + buttonHeight/2 + 5);
+        } else {
+            ctx.moveTo(x + 20, y + buttonHeight/2 - 6);
+            ctx.lineTo(x + 20, y + buttonHeight/2 + 6);
+            ctx.moveTo(x + 14, y + buttonHeight/2);
+            ctx.lineTo(x + 26, y + buttonHeight/2);
+        }
+        ctx.stroke();
+        ctx.fillStyle = NODE_TEXT_COL;
+        ctx.font = "16px Helvetica";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText("Add node", x + 38, y + buttonHeight/2);
+        if(!this.nodePickerOpen) return;
+
+        const menuHeight = this.nodeTypes.length * rowHeight + 12;
+        ctx.beginPath();
+        ctx.roundRect(x, menuY, menuWidth, menuHeight, 8);
+        ctx.fillStyle = NODE_BACKGROUND_COL;
+        ctx.fill();
+        ctx.strokeStyle = STROKE_COL;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.font = "14px Helvetica";
+        ctx.textAlign = "left";
+        for(let i = 0; i < this.nodeTypes.length; i++){
+            const rowTop = menuY + 6 + i * rowHeight;
+            if(this.hoveredPickerItem === i){
+                ctx.fillStyle = "#293D59";
+                ctx.fillRect(x + 6, rowTop, menuWidth - 12, rowHeight);
+            }
+            ctx.fillStyle = SLOT_TEXT_COL;
+            ctx.fillText(this.nodeTypes[i].name, x + 12, rowTop + rowHeight/2);
+        }
+    }
+    getPickerItemAt(position){
+        const {x, y, buttonWidth, buttonHeight, menuY, menuWidth, rowHeight} = NODE_PICKER;
+        if(position.x >= x && position.x <= x + buttonWidth &&
+           position.y >= y && position.y <= y + buttonHeight) return "button";
+        if(!this.nodePickerOpen || position.x < x || position.x > x + menuWidth ||
+           position.y < menuY + 6 || position.y >= menuY + 6 + this.nodeTypes.length * rowHeight) return null;
+        return Math.floor((position.y - menuY - 6) / rowHeight);
     }
     getWorldPointerPosition(event){
         const rect = cv.getBoundingClientRect();
@@ -39,6 +136,31 @@ class Space{
         return canvasToWorld(canvasPosition, this.cam);
     }
     onPointerDown(event){
+        const rect = cv.getBoundingClientRect();
+        const screenPosition = vec(
+            (event.clientX - rect.left) * cv.width / rect.width,
+            (event.clientY - rect.top) * cv.height / rect.height
+        );
+        const {x, y, buttonWidth, buttonHeight, menuY, menuWidth, rowHeight} = NODE_PICKER;
+        if(screenPosition.x >= x && screenPosition.x <= x + buttonWidth &&
+           screenPosition.y >= y && screenPosition.y <= y + buttonHeight){
+            this.nodePickerOpen = !this.nodePickerOpen;
+            event.preventDefault();
+            return;
+        }
+        if(this.nodePickerOpen){
+            const menuHeight = this.nodeTypes.length * rowHeight + 12;
+            if(screenPosition.x >= x && screenPosition.x <= x + menuWidth &&
+               screenPosition.y >= menuY + 6 && screenPosition.y < menuY + menuHeight - 6){
+                const index = Math.floor((screenPosition.y - menuY - 6) / rowHeight);
+                const selectedType = this.nodeTypes[index];
+                this.nodePickerOpen = false;
+                if(selectedType) this.addNode(selectedType);
+                event.preventDefault();
+                return;
+            }
+            this.nodePickerOpen = false;
+        }
         const pointerPosition = this.getWorldPointerPosition(event);
         for(let i = this.nodeVisuals.length - 1; i >= 0; i--){
             const nodeVisual = this.nodeVisuals[i];
@@ -65,6 +187,12 @@ class Space{
         }
     }
     onPointerMove(event){
+        const rect = cv.getBoundingClientRect();
+        const screenPosition = vec(
+            (event.clientX - rect.left) * cv.width / rect.width,
+            (event.clientY - rect.top) * cv.height / rect.height
+        );
+        this.hoveredPickerItem = this.getPickerItemAt(screenPosition);
         if(this.draggedSlotVisual !== null){
             const pointerPosition = this.getWorldPointerPosition(event);
             const nodePosition = this.draggedSlotVisual.nodeVisual.pos;
@@ -76,6 +204,10 @@ class Space{
         }
         if(this.draggedNodeVisual !== null){
             this.draggedNodeVisual.pos = this.getWorldPointerPosition(event).add(this.dragOffset);
+            return;
+        }
+        if(this.hoveredPickerItem !== null){
+            cv.style.cursor = "pointer";
             return;
         }
 
@@ -115,6 +247,7 @@ class Space{
         for(let nodeVisual of this.nodeVisuals){
             nodeVisual.draw(this.cam);
         }
+        this.drawNodePicker();
     }
 }
 const cam = {}
