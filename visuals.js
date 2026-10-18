@@ -22,6 +22,67 @@ class Space{
         for(let node of this.nodes){
             this.nodeVisuals.push(new NodeVisual(node, vec(Math.random()*800-400, Math.random()*500-250), this));
         }
+        this.draggedNodeVisual = null;
+        this.draggedSlotVisual = null;
+        this.dragOffset = vec();
+        cv.addEventListener("pointerdown", this.onPointerDown.bind(this));
+        cv.addEventListener("pointermove", this.onPointerMove.bind(this));
+        cv.addEventListener("pointerup", this.onPointerUp.bind(this));
+        cv.addEventListener("pointercancel", this.onPointerUp.bind(this));
+    }
+    getWorldPointerPosition(event){
+        const rect = cv.getBoundingClientRect();
+        const canvasPosition = vec(
+            (event.clientX - rect.left) * cv.width / rect.width,
+            (event.clientY - rect.top) * cv.height / rect.height
+        );
+        return canvasToWorld(canvasPosition, this.cam);
+    }
+    onPointerDown(event){
+        const pointerPosition = this.getWorldPointerPosition(event);
+        for(let i = this.nodeVisuals.length - 1; i >= 0; i--){
+            const nodeVisual = this.nodeVisuals[i];
+            for(let j = nodeVisual.sloteVisuals.length - 1; j >= 0; j--){
+                const slotVisual = nodeVisual.sloteVisuals[j];
+                if(pointerPosition.sub(slotVisual.getPosition()).length() <= slotVisual.radius + 3 / this.cam.zoom){
+                    this.draggedSlotVisual = slotVisual;
+                    cv.setPointerCapture(event.pointerId);
+                    cv.style.cursor = "grabbing";
+                    event.preventDefault();
+                    return;
+                }
+            }
+            const halfSize = nodeVisual.size.mul(.5);
+            if(Math.abs(pointerPosition.x - nodeVisual.pos.x) <= halfSize.x &&
+               Math.abs(pointerPosition.y - nodeVisual.pos.y) <= halfSize.y){
+                this.draggedNodeVisual = nodeVisual;
+                this.dragOffset = nodeVisual.pos.sub(pointerPosition);
+                cv.setPointerCapture(event.pointerId);
+                cv.style.cursor = "grabbing";
+                event.preventDefault();
+                return;
+            }
+        }
+    }
+    onPointerMove(event){
+        if(this.draggedSlotVisual !== null){
+            const pointerPosition = this.getWorldPointerPosition(event);
+            const nodePosition = this.draggedSlotVisual.nodeVisual.pos;
+            this.draggedSlotVisual.angle = Math.atan2(
+                pointerPosition.y - nodePosition.y,
+                pointerPosition.x - nodePosition.x
+            );
+            return;
+        }
+        if(this.draggedNodeVisual === null) return;
+        this.draggedNodeVisual.pos = this.getWorldPointerPosition(event).add(this.dragOffset);
+    }
+    onPointerUp(event){
+        if(this.draggedNodeVisual === null && this.draggedSlotVisual === null) return;
+        this.draggedNodeVisual = null;
+        this.draggedSlotVisual = null;
+        if(cv.hasPointerCapture(event.pointerId)) cv.releasePointerCapture(event.pointerId);
+        cv.style.cursor = "";
     }
     draw(){
         ctx.fillStyle = BACKGROUND_COL;
@@ -70,18 +131,38 @@ class NodeVisual{
     }
 }
 
-function getRectEdgePosition(size, angle) {
-    let w = size.x;
-    let h = size.y;
-    const dx = Math.cos(angle);
-    const dy = Math.sin(angle);
+function getRectEdgePosition(size, angle, radius = 10) {
+    const halfWidth = size.x / 2;
+    const halfHeight = size.y / 2;
+    const cornerRadius = Math.max(0, Math.min(radius, halfWidth, halfHeight));
+    const dx = Math.abs(Math.cos(angle));
+    const dy = Math.abs(Math.sin(angle));
+    const signX = Math.cos(angle) < 0 ? -1 : 1;
+    const signY = Math.sin(angle) < 0 ? -1 : 1;
+    let distance = Infinity;
 
-    const scaleX = Math.abs(dx) < 1e-10 ? Infinity : (w / 2) / Math.abs(dx);
-    const scaleY = Math.abs(dy) < 1e-10 ? Infinity : (h / 2) / Math.abs(dy);
+    if(dx > 1e-10){
+        const sideDistance = halfWidth / dx;
+        if(sideDistance * dy <= halfHeight - cornerRadius){
+            distance = Math.min(distance, sideDistance);
+        }
+    }
+    if(dy > 1e-10){
+        const sideDistance = halfHeight / dy;
+        if(sideDistance * dx <= halfWidth - cornerRadius){
+            distance = Math.min(distance, sideDistance);
+        }
+    }
 
-    const scale = Math.min(scaleX, scaleY);
+    if(!Number.isFinite(distance)){
+        const cornerX = halfWidth - cornerRadius;
+        const cornerY = halfHeight - cornerRadius;
+        const projection = cornerX * dx + cornerY * dy;
+        const discriminant = projection * projection - (cornerX * cornerX + cornerY * cornerY - cornerRadius * cornerRadius);
+        distance = projection + Math.sqrt(Math.max(0, discriminant));
+    }
 
-    return new Vector(dx * scale, dy * scale);
+    return new Vector(signX * dx * distance, signY * dy * distance);
 }
 
 class SlotVisual{
@@ -93,7 +174,12 @@ class SlotVisual{
         this.space = space;
     }
     getPosition(){
-        let shift = getRectEdgePosition(this.nodeVisual.size.add(vec(this.radius*2+4)), this.angle);
+        const offset = this.radius + 2;
+        let shift = getRectEdgePosition(
+            this.nodeVisual.size.add(vec(offset*2)),
+            this.angle,
+            10 + offset
+        );
         return this.nodeVisual.pos.add(shift);
     }
     drawConnections(cam){
@@ -112,8 +198,8 @@ class SlotVisual{
         }
     }
     draw(cam){
-        let shift = getRectEdgePosition(this.nodeVisual.size.add(vec(this.radius*2+4)), this.angle);
-        let pos = this.nodeVisual.pos.add(shift);
+        let pos = this.getPosition();
+        let shift = pos.sub(this.nodeVisual.pos);
         let sp = worldToCanvas(pos, cam);
         ctx.beginPath();
         ctx.arc(sp.x, sp.y, cam.zoom*this.radius, 0, Math.PI*2);
