@@ -74,8 +74,29 @@ class Space{
             );
             return;
         }
-        if(this.draggedNodeVisual === null) return;
-        this.draggedNodeVisual.pos = this.getWorldPointerPosition(event).add(this.dragOffset);
+        if(this.draggedNodeVisual !== null){
+            this.draggedNodeVisual.pos = this.getWorldPointerPosition(event).add(this.dragOffset);
+            return;
+        }
+
+        const pointerPosition = this.getWorldPointerPosition(event);
+        let isOverDraggable = false;
+        for(let i = this.nodeVisuals.length - 1; i >= 0 && !isOverDraggable; i--){
+            const nodeVisual = this.nodeVisuals[i];
+            for(let j = nodeVisual.sloteVisuals.length - 1; j >= 0; j--){
+                const slotVisual = nodeVisual.sloteVisuals[j];
+                if(pointerPosition.sub(slotVisual.getPosition()).length() <= slotVisual.radius + 3 / this.cam.zoom){
+                    isOverDraggable = true;
+                    break;
+                }
+            }
+            const halfSize = nodeVisual.size.mul(.5);
+            if(Math.abs(pointerPosition.x - nodeVisual.pos.x) <= halfSize.x &&
+               Math.abs(pointerPosition.y - nodeVisual.pos.y) <= halfSize.y){
+                isOverDraggable = true;
+            }
+        }
+        cv.style.cursor = isOverDraggable ? "grab" : "";
     }
     onPointerUp(event){
         if(this.draggedNodeVisual === null && this.draggedSlotVisual === null) return;
@@ -83,6 +104,7 @@ class Space{
         this.draggedSlotVisual = null;
         if(cv.hasPointerCapture(event.pointerId)) cv.releasePointerCapture(event.pointerId);
         cv.style.cursor = "";
+        this.onPointerMove(event);
     }
     draw(){
         ctx.fillStyle = BACKGROUND_COL;
