@@ -334,7 +334,7 @@ class Space{
             slotVisual.drawConnections(this.cam);
         }
         if(this.connectingSlotVisual !== null && this.pointerWorldPosition !== null){
-            const start = worldToCanvas(this.connectingSlotVisual.getPosition(), this.cam);
+            const start = worldToCanvas(this.connectingSlotVisual.getConnectionPosition(), this.cam);
             const end = worldToCanvas(this.pointerWorldPosition, this.cam);
             ctx.beginPath();
             ctx.moveTo(start.x, start.y);
@@ -424,10 +424,10 @@ class SlotVisual{
         this.slot = slot;
         this.nodeVisual = nodeVisual;
         this.angle = angle;
-        this.radius = 5;
+        this.radius = 9;
         this.space = space;
     }
-    getPosition(){
+    getOuterPosition(){
         const offset = this.radius + 2;
         let shift = getRectEdgePosition(
             this.nodeVisual.size.add(vec(offset*2)),
@@ -436,13 +436,55 @@ class SlotVisual{
         );
         return this.nodeVisual.pos.add(shift);
     }
+    getPosition(){
+        const outerPosition = this.getOuterPosition();
+        if(this.slot.direction !== DIRECTIONS.OUTPUT || this.slot.type === ControlType) return outerPosition;
+        const outward = vec(Math.cos(this.getFacingAngle()), Math.sin(this.getFacingAngle()));
+        return outerPosition.sub(outward.mul(this.radius + 2));
+    }
+    getFacingAngle(){
+        const offset = this.radius + 2;
+        const halfWidth = this.nodeVisual.size.x / 2 + offset;
+        const halfHeight = this.nodeVisual.size.y / 2 + offset;
+        const cornerRadius = 10 + offset;
+        const straightX = halfWidth - cornerRadius;
+        const straightY = halfHeight - cornerRadius;
+        const shift = this.getOuterPosition().sub(this.nodeVisual.pos);
+
+        if(Math.abs(shift.x) <= straightX){
+            return shift.y < 0 ? -Math.PI / 2 : Math.PI / 2;
+        }
+        if(Math.abs(shift.y) <= straightY){
+            return shift.x < 0 ? Math.PI : 0;
+        }
+
+        const cornerCenter = vec(
+            (shift.x < 0 ? -1 : 1) * straightX,
+            (shift.y < 0 ? -1 : 1) * straightY
+        );
+        const cornerNormal = shift.sub(cornerCenter);
+        return Math.atan2(cornerNormal.y, cornerNormal.x);
+    }
+    getConnectionPosition(){
+        const position = this.getPosition();
+        const angle = this.getFacingAngle();
+        const outward = vec(Math.cos(angle), Math.sin(angle));
+        if(this.slot.type === ControlType){
+            // Both triangle directions connect at the vertex or midpoint of the base edge.
+            return position.add(outward.mul(this.radius));
+        }
+        if(this.slot.direction === DIRECTIONS.INPUT) return position;
+
+        // The output semicircle connects at the outermost point on its curved edge.
+        return position.add(outward.mul(this.radius));
+    }
     drawConnections(cam){
         if(this.slot.direction !== DIRECTIONS.INPUT) return;
-        const start = worldToCanvas(this.getPosition(), cam);
+        const start = worldToCanvas(this.getConnectionPosition(), cam);
         for(let connectedSlot of this.slot.connectedSlots){
             const connectedVisual = this.space.slotVisuals.get(connectedSlot);
             if(connectedVisual === undefined) continue;
-            const end = worldToCanvas(connectedVisual.getPosition(), cam);
+            const end = worldToCanvas(connectedVisual.getConnectionPosition(), cam);
             ctx.beginPath();
             ctx.moveTo(start.x, start.y);
             ctx.lineTo(end.x, end.y);
@@ -450,6 +492,25 @@ class SlotVisual{
             ctx.lineWidth = cam.zoom*2;
             ctx.stroke();
         }
+    }
+    traceShape(cam){
+        const radius = cam.zoom * this.radius;
+        if(this.slot.type === ControlType){
+            const direction = this.slot.direction === DIRECTIONS.OUTPUT ? 1 : -1;
+            ctx.moveTo(direction * radius, 0);
+            ctx.lineTo(-direction * radius, -radius * 0.86);
+            ctx.lineTo(-direction * radius, radius * 0.86);
+            ctx.closePath();
+            return;
+        }
+
+        ctx.moveTo(0, -radius);
+        if(this.slot.direction === DIRECTIONS.OUTPUT){
+            ctx.arc(0, 0, radius, -Math.PI/2, Math.PI/2);
+        } else {
+            ctx.arc(0, 0, radius, -Math.PI/2, Math.PI/2, true);
+        }
+        ctx.closePath();
     }
     draw(cam){
         let pos = this.getPosition();
@@ -460,14 +521,17 @@ class SlotVisual{
         const isHoveredForAngle = this.space.connectingSlotVisual === null &&
             this.space.hoveredSlotVisual === this && this.space.hoveredSlotCanDragAngle;
         const isHoveredForConnection = this.space.hoveredSlotVisual === this && !this.space.hoveredSlotCanDragAngle;
+        ctx.save();
+        ctx.translate(sp.x, sp.y);
+        ctx.rotate(this.getFacingAngle());
         ctx.beginPath();
-        ctx.arc(sp.x, sp.y, cam.zoom*this.radius, 0, Math.PI*2);
+        this.traceShape(cam);
         ctx.fillStyle = isAngleDragging || isHoveredForAngle ? "#FFFFFF" : STROKE_COL;
         ctx.fill();
         if(isConnecting || (isHoveredForConnection && !isAngleDragging)){
             const ringLineWidth = cam.zoom * 2;
             ctx.beginPath();
-            ctx.arc(sp.x, sp.y, cam.zoom * this.radius + ringLineWidth / 2, 0, Math.PI*2);
+            this.traceShape(cam);
             ctx.strokeStyle = isHoveredForConnection && this.space.connectingSlotVisual !== null &&
                 !this.space.hoveredConnectionIsLegal
                 ? "#EF4444"
@@ -475,9 +539,11 @@ class SlotVisual{
             ctx.lineWidth = ringLineWidth;
             ctx.stroke();
         }
+        ctx.restore();
         ctx.fillStyle = SLOT_TEXT_COL;
         let textSideSign = shift.x < 0 ? -1 : 1;
         ctx.textAlign = shift.x < 0 ? "right" : "left";
-        ctx.fillText(this.slot.name, sp.x+this.radius*textSideSign, sp.y);
+        const connectionSp = worldToCanvas(this.getConnectionPosition(), cam);
+        ctx.fillText(this.slot.name, sp.x+this.radius*textSideSign, connectionSp.y);
     }
 }
