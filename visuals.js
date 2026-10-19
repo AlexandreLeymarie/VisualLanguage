@@ -165,6 +165,22 @@ class Space{
         }
         return closest;
     }
+    isPointerOverNode(position){
+        for(const nodeVisual of this.nodeVisuals){
+            const local = position.sub(nodeVisual.pos);
+            const halfWidth = nodeVisual.size.x / 2;
+            const halfHeight = nodeVisual.size.y / 2;
+            const radius = 10;
+            const x = Math.abs(local.x);
+            const y = Math.abs(local.y);
+            if(x > halfWidth || y > halfHeight) continue;
+            if(x <= halfWidth - radius || y <= halfHeight - radius) return true;
+            const cornerX = x - (halfWidth - radius);
+            const cornerY = y - (halfHeight - radius);
+            if(cornerX * cornerX + cornerY * cornerY <= radius * radius) return true;
+        }
+        return false;
+    }
     getWorldPointerPosition(event){
         const rect = cv.getBoundingClientRect();
         const canvasPosition = vec(
@@ -200,31 +216,33 @@ class Space{
             this.nodePickerOpen = false;
         }
         const pointerPosition = this.getWorldPointerPosition(event);
-        const directlyHitSlot = this.getSlotVisualAt(
-            pointerPosition,
-            SLOT_ANGLE_PADDING / this.cam.zoom
-        );
-        if(directlyHitSlot !== null){
-            this.draggedSlotVisual = directlyHitSlot;
-            cv.setPointerCapture(event.pointerId);
-            cv.style.cursor = "grabbing";
-            event.preventDefault();
-            return;
-        }
-        const nearbySlot = this.getSlotVisualAt(
-            pointerPosition,
-            SLOT_HOVER_PADDING / this.cam.zoom
-        );
-        if(nearbySlot !== null){
-            this.connectingSlotVisual = nearbySlot;
-            this.hoveredSlotVisual = null;
-            this.hoveredSlotCanDragAngle = false;
-            this.hoveredConnectionIsLegal = false;
-            this.pointerWorldPosition = pointerPosition;
-            cv.setPointerCapture(event.pointerId);
-            cv.style.cursor = "grabbing";
-            event.preventDefault();
-            return;
+        if(!this.isPointerOverNode(pointerPosition)){
+            const directlyHitSlot = this.getSlotVisualAt(
+                pointerPosition,
+                SLOT_ANGLE_PADDING / this.cam.zoom
+            );
+            if(directlyHitSlot !== null){
+                this.draggedSlotVisual = directlyHitSlot;
+                cv.setPointerCapture(event.pointerId);
+                cv.style.cursor = "grabbing";
+                event.preventDefault();
+                return;
+            }
+            const nearbySlot = this.getSlotVisualAt(
+                pointerPosition,
+                SLOT_HOVER_PADDING / this.cam.zoom
+            );
+            if(nearbySlot !== null){
+                this.connectingSlotVisual = nearbySlot;
+                this.hoveredSlotVisual = null;
+                this.hoveredSlotCanDragAngle = false;
+                this.hoveredConnectionIsLegal = false;
+                this.pointerWorldPosition = pointerPosition;
+                cv.setPointerCapture(event.pointerId);
+                cv.style.cursor = "grabbing";
+                event.preventDefault();
+                return;
+            }
         }
         for(let i = this.nodeVisuals.length - 1; i >= 0; i--){
             const nodeVisual = this.nodeVisuals[i];
@@ -263,7 +281,8 @@ class Space{
         const pointerIsNearConnectionSource = this.connectingSlotVisual !== null &&
             this.pointerWorldPosition.sub(this.connectingSlotVisual.getPosition()).length() <=
                 this.connectingSlotVisual.radius + SLOT_HOVER_PADDING / this.cam.zoom;
-        this.hoveredSlotVisual = pointerIsNearConnectionSource ? null : this.getSlotVisualAt(
+        const pointerOverNode = this.isPointerOverNode(this.pointerWorldPosition);
+        this.hoveredSlotVisual = pointerOverNode || pointerIsNearConnectionSource ? null : this.getSlotVisualAt(
             this.pointerWorldPosition,
             SLOT_HOVER_PADDING / this.cam.zoom,
             this.connectingSlotVisual,
