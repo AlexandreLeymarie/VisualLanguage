@@ -22,7 +22,7 @@ resizeCanvas();
 
 let worldToCanvas=(p,cam)=>p.sub(cam.pos).mul(cam.zoom).add(vec(cv.width/2,cv.height/2))
 let canvasToWorld=(p,cam)=>p.sub(vec(cv.width/2,cv.height/2)).mul(1/cam.zoom).add(cam.pos)
-const NODE_PICKER = {x: 16, y: 16, buttonWidth: 132, buttonHeight: 48, executeX: 156, menuY: 76, menuWidth: 190, rowHeight: 32};
+const NODE_PICKER = {x: 16, y: 16, buttonWidth: 48, buttonHeight: 48, eraserX: 72, executeX: 128, executeWidth: 120, menuY: 76, menuWidth: 190, rowHeight: 32};
 
 
 class Space{
@@ -44,6 +44,8 @@ class Space{
         this.hoveredSlotVisual = null;
         this.hoveredSlotCanDragAngle = false;
         this.hoveredConnectionIsLegal = false;
+        this.eraserMode = false;
+        this.hoveredEraseTarget = null;
         this.pointerWorldPosition = null;
         this.dragOffset = vec();
         this.nodePickerOpen = false;
@@ -58,6 +60,7 @@ class Space{
         cv.addEventListener("pointercancel", this.onPointerUp.bind(this));
         cv.addEventListener("pointerleave", () => {
             this.hoveredPickerItem = null;
+            this.hoveredEraseTarget = null;
             if(this.draggedNodeVisual === null && this.draggedSlotVisual === null && this.connectingSlotVisual === null){
                 this.hoveredSlotVisual = null;
                 this.hoveredSlotCanDragAngle = false;
@@ -84,7 +87,7 @@ class Space{
         this.nodeVisuals.push(new NodeVisual(node, this.cam.pos.copy(), this));
     }
     drawNodePicker(){
-        const {x, y, buttonWidth, buttonHeight, menuY, menuWidth, rowHeight} = NODE_PICKER;
+        const {x, y, buttonWidth, buttonHeight, eraserX, executeX, executeWidth, menuY, menuWidth, rowHeight} = NODE_PICKER;
         ctx.save();
         ctx.globalAlpha = 1;
         ctx.globalCompositeOperation = "source-over";
@@ -101,24 +104,31 @@ class Space{
         ctx.lineCap = "round";
         ctx.beginPath();
         if(this.nodePickerOpen){
-            ctx.moveTo(x + 15, y + buttonHeight/2 - 5);
-            ctx.lineTo(x + 25, y + buttonHeight/2 + 5);
-            ctx.moveTo(x + 25, y + buttonHeight/2 - 5);
-            ctx.lineTo(x + 15, y + buttonHeight/2 + 5);
+            ctx.moveTo(x + 19, y + buttonHeight/2 - 5);
+            ctx.lineTo(x + 29, y + buttonHeight/2 + 5);
+            ctx.moveTo(x + 29, y + buttonHeight/2 - 5);
+            ctx.lineTo(x + 19, y + buttonHeight/2 + 5);
         } else {
-            ctx.moveTo(x + 20, y + buttonHeight/2 - 6);
-            ctx.lineTo(x + 20, y + buttonHeight/2 + 6);
-            ctx.moveTo(x + 14, y + buttonHeight/2);
-            ctx.lineTo(x + 26, y + buttonHeight/2);
+            ctx.moveTo(x + 24, y + buttonHeight/2 - 6);
+            ctx.lineTo(x + 24, y + buttonHeight/2 + 6);
+            ctx.moveTo(x + 18, y + buttonHeight/2);
+            ctx.lineTo(x + 30, y + buttonHeight/2);
         }
         ctx.stroke();
-        ctx.fillStyle = NODE_TEXT_COL;
-        ctx.font = "16px Helvetica";
-        ctx.textAlign = "left";
-        ctx.textBaseline = "middle";
-        ctx.fillText("Add node", x + 38, y + buttonHeight/2);
         ctx.beginPath();
-        ctx.roundRect(NODE_PICKER.executeX, y, buttonWidth, buttonHeight, 8);
+        ctx.roundRect(eraserX, y, buttonWidth, buttonHeight, 8);
+        ctx.fillStyle = this.eraserMode ? "#5B2D2D" : this.hoveredPickerItem === "eraser" ? "#293D59" : NODE_BACKGROUND_COL;
+        ctx.fill();
+        ctx.strokeStyle = this.eraserMode ? "#EF7777" : STROKE_COL;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = NODE_TEXT_COL;
+        ctx.font = "30px Helvetica";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("−", eraserX + buttonWidth/2, y + buttonHeight/2 - 1);
+        ctx.beginPath();
+        ctx.roundRect(executeX, y, executeWidth, buttonHeight, 8);
         ctx.fillStyle = this.hoveredPickerItem === "execute" ? "#293D59" : NODE_BACKGROUND_COL;
         ctx.fill();
         ctx.strokeStyle = STROKE_COL;
@@ -126,15 +136,15 @@ class Space{
         ctx.stroke();
         ctx.fillStyle = NODE_TEXT_COL;
         ctx.beginPath();
-        ctx.moveTo(NODE_PICKER.executeX + 16, y + buttonHeight/2 - 7);
-        ctx.lineTo(NODE_PICKER.executeX + 16, y + buttonHeight/2 + 7);
-        ctx.lineTo(NODE_PICKER.executeX + 27, y + buttonHeight/2);
+        ctx.moveTo(executeX + 14, y + buttonHeight/2 - 7);
+        ctx.lineTo(executeX + 14, y + buttonHeight/2 + 7);
+        ctx.lineTo(executeX + 25, y + buttonHeight/2);
         ctx.closePath();
         ctx.fill();
         ctx.font = "16px Helvetica";
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
-        ctx.fillText("Execute", NODE_PICKER.executeX + 38, y + buttonHeight/2);
+        ctx.fillText("Execute", executeX + 34, y + buttonHeight/2);
         if(!this.nodePickerOpen){
             ctx.restore();
             return;
@@ -162,8 +172,10 @@ class Space{
         ctx.restore();
     }
     getPickerItemAt(position){
-        const {x, y, buttonWidth, buttonHeight, executeX, menuY, menuWidth, rowHeight} = NODE_PICKER;
-        if(position.x >= executeX && position.x <= executeX + buttonWidth &&
+        const {x, y, buttonWidth, buttonHeight, eraserX, executeX, executeWidth, menuY, menuWidth, rowHeight} = NODE_PICKER;
+        if(position.x >= eraserX && position.x <= eraserX + buttonWidth &&
+           position.y >= y && position.y <= y + buttonHeight) return "eraser";
+        if(position.x >= executeX && position.x <= executeX + executeWidth &&
            position.y >= y && position.y <= y + buttonHeight) return "execute";
         if(position.x >= x && position.x <= x + buttonWidth &&
            position.y >= y && position.y <= y + buttonHeight) return "button";
@@ -189,21 +201,72 @@ class Space{
         }
         return closest;
     }
-    isPointerOverNode(position){
-        for(const nodeVisual of this.nodeVisuals){
-            const local = position.sub(nodeVisual.pos);
-            const halfWidth = nodeVisual.size.x / 2;
-            const halfHeight = nodeVisual.size.y / 2;
-            const radius = 10;
-            const x = Math.abs(local.x);
-            const y = Math.abs(local.y);
-            if(x > halfWidth || y > halfHeight) continue;
-            if(x <= halfWidth - radius || y <= halfHeight - radius) return true;
-            const cornerX = x - (halfWidth - radius);
-            const cornerY = y - (halfHeight - radius);
-            if(cornerX * cornerX + cornerY * cornerY <= radius * radius) return true;
+    isPointOverNode(position, nodeVisual){
+        const local = position.sub(nodeVisual.pos);
+        const halfWidth = nodeVisual.size.x / 2;
+        const halfHeight = nodeVisual.size.y / 2;
+        const radius = 10;
+        const x = Math.abs(local.x);
+        const y = Math.abs(local.y);
+        if(x > halfWidth || y > halfHeight) return false;
+        if(x <= halfWidth - radius || y <= halfHeight - radius) return true;
+        const cornerX = x - (halfWidth - radius);
+        const cornerY = y - (halfHeight - radius);
+        return cornerX * cornerX + cornerY * cornerY <= radius * radius;
+    }
+    getNodeVisualAt(position){
+        for(let i = this.nodeVisuals.length - 1; i >= 0; i--){
+            if(this.isPointOverNode(position, this.nodeVisuals[i])) return this.nodeVisuals[i];
         }
-        return false;
+        return null;
+    }
+    isPointerOverNode(position){
+        return this.getNodeVisualAt(position) !== null;
+    }
+    getEraseTargetAt(position){
+        const nodeVisual = this.getNodeVisualAt(position);
+        if(nodeVisual !== null && nodeVisual.node !== this.startNode) return {nodeVisual};
+
+        let closestTarget = null;
+        let closestDistance = Infinity;
+        const maxDistance = 8 / this.cam.zoom;
+        for(const candidateVisual of this.nodeVisuals){
+            for(const inputSlot of candidateVisual.node.getInputSlots()){
+                const inputVisual = this.slotVisuals.get(inputSlot);
+                if(inputVisual === undefined) continue;
+                for(const outputSlot of inputSlot.connectedSlots){
+                    const outputVisual = this.slotVisuals.get(outputSlot);
+                    if(outputVisual === undefined) continue;
+                    const start = inputVisual.getConnectionPosition();
+                    const end = outputVisual.getConnectionPosition();
+                    const segment = end.sub(start);
+                    const lengthSquared = segment.dot(segment);
+                    const t = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1, position.sub(start).dot(segment) / lengthSquared));
+                    const nearest = start.add(segment.mul(t));
+                    const distance = position.sub(nearest).length();
+                    if(distance <= maxDistance && distance < closestDistance){
+                        closestTarget = {inputSlot, outputSlot};
+                        closestDistance = distance;
+                    }
+                }
+            }
+        }
+        return closestTarget;
+    }
+    eraseAt(position){
+        const target = this.getEraseTargetAt(position);
+        if(target === null) return;
+        if(target.nodeVisual){
+            const node = target.nodeVisual.node;
+            for(const slot of node.slots) slot.disconnect();
+            for(const slot of node.slots) this.slotVisuals.delete(slot);
+            this.nodes = this.nodes.filter(existing => existing !== node);
+            this.nodeVisuals = this.nodeVisuals.filter(visual => visual !== target.nodeVisual);
+            if(node === this.startNode) this.startNode = null;
+            this.hoveredEraseTarget = null;
+        } else {
+            target.inputSlot.disconnect(target.outputSlot);
+        }
     }
     getWorldPointerPosition(event){
         const rect = cv.getBoundingClientRect();
@@ -219,8 +282,8 @@ class Space{
             (event.clientX - rect.left) * cv.width / rect.width,
             (event.clientY - rect.top) * cv.height / rect.height
         );
-        const {x, y, buttonWidth, buttonHeight, executeX, menuY, menuWidth, rowHeight} = NODE_PICKER;
-        if(screenPosition.x >= executeX && screenPosition.x <= executeX + buttonWidth &&
+        const {x, y, buttonWidth, buttonHeight, eraserX, executeX, executeWidth, menuY, menuWidth, rowHeight} = NODE_PICKER;
+        if(screenPosition.x >= executeX && screenPosition.x <= executeX + executeWidth &&
            screenPosition.y >= y && screenPosition.y <= y + buttonHeight){
             this.nodePickerOpen = false;
             if(this.startNode !== null) this.startNode.execute();
@@ -230,6 +293,14 @@ class Space{
         if(screenPosition.x >= x && screenPosition.x <= x + buttonWidth &&
            screenPosition.y >= y && screenPosition.y <= y + buttonHeight){
             this.nodePickerOpen = !this.nodePickerOpen;
+            event.preventDefault();
+            return;
+        }
+        if(screenPosition.x >= eraserX && screenPosition.x <= eraserX + buttonWidth &&
+           screenPosition.y >= y && screenPosition.y <= y + buttonHeight){
+            this.eraserMode = !this.eraserMode;
+            this.hoveredEraseTarget = null;
+            cv.style.cursor = this.eraserMode ? "crosshair" : "";
             event.preventDefault();
             return;
         }
@@ -247,6 +318,11 @@ class Space{
             this.nodePickerOpen = false;
         }
         const pointerPosition = this.getWorldPointerPosition(event);
+        if(this.eraserMode){
+            this.eraseAt(pointerPosition);
+            event.preventDefault();
+            return;
+        }
         if(!this.isPointerOverNode(pointerPosition)){
             const directlyHitSlot = this.getSlotVisualAt(
                 pointerPosition,
@@ -297,6 +373,14 @@ class Space{
         );
         this.hoveredPickerItem = this.getPickerItemAt(screenPosition);
         this.pointerWorldPosition = this.getWorldPointerPosition(event);
+        if(this.eraserMode){
+            this.hoveredEraseTarget = this.hoveredPickerItem === null
+                ? this.getEraseTargetAt(this.pointerWorldPosition)
+                : null;
+            cv.style.cursor = this.hoveredPickerItem === null ? "crosshair" : "pointer";
+            return;
+        }
+        this.hoveredEraseTarget = null;
         if(this.draggedSlotVisual !== null){
             this.hoveredSlotVisual = null;
             this.hoveredSlotCanDragAngle = false;
@@ -404,6 +488,7 @@ class NodeVisual{
     constructor(node, pos, space){
         this.node = node;
         this.pos = pos;
+        this.space = space;
         this.size = vec(64, 64);
         this.sloteVisuals = [];
         let a = -Math.PI*2/3;
@@ -421,8 +506,10 @@ class NodeVisual{
         ctx.roundRect(cornerSp.x, cornerSp.y, this.size.x*cam.zoom, this.size.y*cam.zoom, cam.zoom*10);
         ctx.fillStyle = NODE_BACKGROUND_COL;
         ctx.fill();
-        ctx.strokeStyle = STROKE_COL;
-        ctx.lineWidth = cam.zoom*2;
+        const isEraseTarget = this.space.eraserMode &&
+            this.space.hoveredEraseTarget?.nodeVisual === this;
+        ctx.strokeStyle = isEraseTarget ? "#EF4444" : STROKE_COL;
+        ctx.lineWidth = isEraseTarget ? cam.zoom*3 : cam.zoom*2;
         ctx.stroke();
         ctx.fillStyle = NODE_TEXT_COL;
         ctx.font = (cam.zoom*16)+"px Helvetica";
@@ -538,8 +625,11 @@ class SlotVisual{
             ctx.beginPath();
             ctx.moveTo(start.x, start.y);
             ctx.lineTo(end.x, end.y);
-            ctx.strokeStyle = STROKE_COL;
-            ctx.lineWidth = cam.zoom*2;
+            const eraseTarget = this.space.hoveredEraseTarget;
+            const isEraseTarget = this.space.eraserMode && eraseTarget?.inputSlot === this.slot &&
+                eraseTarget.outputSlot === connectedSlot;
+            ctx.strokeStyle = isEraseTarget ? "#EF4444" : STROKE_COL;
+            ctx.lineWidth = isEraseTarget ? cam.zoom*4 : cam.zoom*2;
             ctx.stroke();
         }
     }
