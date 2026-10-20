@@ -491,12 +491,24 @@ class NodeVisual{
         this.space = space;
         this.size = vec(64, 64);
         this.sloteVisuals = [];
-        let a = -Math.PI*2/3;
+        const inputSlots = this.node.getInputSlots();
+        const outputSlots = this.node.getOutputSlots();
+        const straightFaceHalfWidth = this.size.x / 2 - 10;
+        const createAngle = (direction, index, count) => {
+            const x = count === 1
+                ? 0
+                : -straightFaceHalfWidth + 2 * straightFaceHalfWidth * index / (count - 1);
+            const y = direction === DIRECTIONS.INPUT ? -this.size.y / 2 : this.size.y / 2;
+            return Math.atan2(y, x);
+        };
+        const slotAngles = new Map();
+        for(const [slots, direction] of [[inputSlots, DIRECTIONS.INPUT], [outputSlots, DIRECTIONS.OUTPUT]]){
+            slots.forEach((slot, index) => slotAngles.set(slot, createAngle(direction, index, slots.length)));
+        }
         for(let slot of this.node.slots){
-            const slotVisual = new SlotVisual(slot, this, a, space);
+            const slotVisual = new SlotVisual(slot, this, slotAngles.get(slot), space);
             this.sloteVisuals.push(slotVisual);
             space.slotVisuals.set(slot, slotVisual);
-            a += 1;
         }
     }
     draw(cam){
