@@ -22,17 +22,21 @@ resizeCanvas();
 
 let worldToCanvas=(p,cam)=>p.sub(cam.pos).mul(cam.zoom).add(vec(cv.width/2,cv.height/2))
 let canvasToWorld=(p,cam)=>p.sub(vec(cv.width/2,cv.height/2)).mul(1/cam.zoom).add(cam.pos)
-const NODE_PICKER = {x: 16, y: 16, buttonWidth: 132, buttonHeight: 48, menuY: 76, menuWidth: 190, rowHeight: 32};
+const NODE_PICKER = {x: 16, y: 16, buttonWidth: 132, buttonHeight: 48, executeX: 156, menuY: 76, menuWidth: 190, rowHeight: 32};
 
 
 class Space{
     constructor(nodes){
         this.cam = {pos: vec(0, 0), zoom: 1};
         this.nodes = nodes;
+        this.startNode = this.nodes.find(node => node instanceof StartNode) || null;
         this.nodeVisuals = [];
         this.slotVisuals = new Map();
         for(let node of this.nodes){
-            this.nodeVisuals.push(new NodeVisual(node, vec(Math.random()*800-400, Math.random()*500-250), this));
+            const position = node instanceof StartNode
+                ? this.cam.pos.copy()
+                : vec(Math.random()*800-400, Math.random()*500-250);
+            this.nodeVisuals.push(new NodeVisual(node, position, this));
         }
         this.draggedNodeVisual = null;
         this.draggedSlotVisual = null;
@@ -113,6 +117,24 @@ class Space{
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
         ctx.fillText("Add node", x + 38, y + buttonHeight/2);
+        ctx.beginPath();
+        ctx.roundRect(NODE_PICKER.executeX, y, buttonWidth, buttonHeight, 8);
+        ctx.fillStyle = this.hoveredPickerItem === "execute" ? "#293D59" : NODE_BACKGROUND_COL;
+        ctx.fill();
+        ctx.strokeStyle = STROKE_COL;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = NODE_TEXT_COL;
+        ctx.beginPath();
+        ctx.moveTo(NODE_PICKER.executeX + 16, y + buttonHeight/2 - 7);
+        ctx.lineTo(NODE_PICKER.executeX + 16, y + buttonHeight/2 + 7);
+        ctx.lineTo(NODE_PICKER.executeX + 27, y + buttonHeight/2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.font = "16px Helvetica";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText("Execute", NODE_PICKER.executeX + 38, y + buttonHeight/2);
         if(!this.nodePickerOpen){
             ctx.restore();
             return;
@@ -140,7 +162,9 @@ class Space{
         ctx.restore();
     }
     getPickerItemAt(position){
-        const {x, y, buttonWidth, buttonHeight, menuY, menuWidth, rowHeight} = NODE_PICKER;
+        const {x, y, buttonWidth, buttonHeight, executeX, menuY, menuWidth, rowHeight} = NODE_PICKER;
+        if(position.x >= executeX && position.x <= executeX + buttonWidth &&
+           position.y >= y && position.y <= y + buttonHeight) return "execute";
         if(position.x >= x && position.x <= x + buttonWidth &&
            position.y >= y && position.y <= y + buttonHeight) return "button";
         if(!this.nodePickerOpen || position.x < x || position.x > x + menuWidth ||
@@ -195,7 +219,14 @@ class Space{
             (event.clientX - rect.left) * cv.width / rect.width,
             (event.clientY - rect.top) * cv.height / rect.height
         );
-        const {x, y, buttonWidth, buttonHeight, menuY, menuWidth, rowHeight} = NODE_PICKER;
+        const {x, y, buttonWidth, buttonHeight, executeX, menuY, menuWidth, rowHeight} = NODE_PICKER;
+        if(screenPosition.x >= executeX && screenPosition.x <= executeX + buttonWidth &&
+           screenPosition.y >= y && screenPosition.y <= y + buttonHeight){
+            this.nodePickerOpen = false;
+            if(this.startNode !== null) this.startNode.execute();
+            event.preventDefault();
+            return;
+        }
         if(screenPosition.x >= x && screenPosition.x <= x + buttonWidth &&
            screenPosition.y >= y && screenPosition.y <= y + buttonHeight){
             this.nodePickerOpen = !this.nodePickerOpen;

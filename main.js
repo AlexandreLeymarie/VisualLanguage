@@ -27,7 +27,8 @@ startSplit.falseOutputSlot.connect(printNode2.controlInputSlot);
 
 const nodes = [a, b, sum, double, str, printNode, doubleStr, printNode2, equalityNode, startSplit];
 startSplit.execute();*/
-const nodes = [];
+const startNode = new StartNode();
+const nodes = [startNode];
 
 const space = new Space(nodes);
 function render(){

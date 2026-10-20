@@ -202,6 +202,20 @@ class SplitNode extends Node{
     }
 }
 
+class StartNode extends Node{
+    constructor(){
+        super();
+        this.name = "start";
+        this.controlOutputSlot = new Slot(this, ControlType, DIRECTIONS.OUTPUT, "start");
+        this.slots = [this.controlOutputSlot];
+    }
+    execute(){
+        for(let connectedSlot of [...this.controlOutputSlot.connectedSlots]){
+            connectedSlot.node.execute();
+        }
+    }
+}
+
 const NODE_TYPES = [
     NumberNode,
     AddNode,
