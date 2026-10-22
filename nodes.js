@@ -72,6 +72,10 @@ class Node{
         }
         return res;
     }
+    resetCachedValues(){
+        if(typeof this.computeData !== "function") return;
+        for(const slot of this.getOutputSlots()) slot.value = null;
+    }
 }
 
 class NumberNode extends Node{
@@ -195,7 +199,23 @@ class StartNode extends Node{
         this.controlOutputSlot = new Slot(this, ControlType, DIRECTIONS.OUTPUT, "start");
         this.slots = [this.controlOutputSlot];
     }
+    resetConnectedGraphCachedValues(){
+        const visited = new Set();
+        const pending = [this];
+        while(pending.length > 0){
+            const node = pending.pop();
+            if(visited.has(node)) continue;
+            visited.add(node);
+            for(const slot of node.slots){
+                for(const connectedSlot of slot.connectedSlots){
+                    pending.push(connectedSlot.node);
+                }
+            }
+        }
+        for(const node of visited) node.resetCachedValues();
+    }
     execute(){
+        this.resetConnectedGraphCachedValues();
         for(let connectedSlot of [...this.controlOutputSlot.connectedSlots]){
             connectedSlot.node.execute();
         }

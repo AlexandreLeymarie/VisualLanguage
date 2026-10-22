@@ -286,7 +286,7 @@ class Space{
         if(screenPosition.x >= executeX && screenPosition.x <= executeX + executeWidth &&
            screenPosition.y >= y && screenPosition.y <= y + buttonHeight){
             this.nodePickerOpen = false;
-            if(this.startNode !== null) this.startNode.execute();
+            this.startNode?.execute();
             event.preventDefault();
             return;
         }
