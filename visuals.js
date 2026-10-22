@@ -6,6 +6,7 @@ const NODE_TEXT_COL = "#F1F5F9";
 const SLOT_DRAG_PADDING = 3;
 const SLOT_ANGLE_PADDING = 0;
 const SLOT_HOVER_PADDING = 18;
+const MINIMAP = {x: 16, width: 200, height: 120, margin: 16};
 
 const cv = document.getElementById("canvas");
 const ctx = cv.getContext("2d");
@@ -41,6 +42,8 @@ class Space{
         this.draggedNodeVisual = null;
         this.draggedSlotVisual = null;
         this.connectingSlotVisual = null;
+        this.isPanning = false;
+        this.lastPanPosition = null;
         this.hoveredSlotVisual = null;
         this.hoveredSlotCanDragAngle = false;
         this.hoveredConnectionIsLegal = false;
@@ -58,10 +61,11 @@ class Space{
         cv.addEventListener("pointermove", this.onPointerMove.bind(this));
         cv.addEventListener("pointerup", this.onPointerUp.bind(this));
         cv.addEventListener("pointercancel", this.onPointerUp.bind(this));
+        cv.addEventListener("wheel", this.onWheel.bind(this), {passive: false});
         cv.addEventListener("pointerleave", () => {
             this.hoveredPickerItem = null;
             this.hoveredEraseTarget = null;
-            if(this.draggedNodeVisual === null && this.draggedSlotVisual === null && this.connectingSlotVisual === null){
+            if(this.draggedNodeVisual === null && this.draggedSlotVisual === null && this.connectingSlotVisual === null && !this.isPanning){
                 this.hoveredSlotVisual = null;
                 this.hoveredSlotCanDragAngle = false;
                 cv.style.cursor = "";
@@ -269,12 +273,30 @@ class Space{
         }
     }
     getWorldPointerPosition(event){
+        return canvasToWorld(this.getCanvasPointerPosition(event), this.cam);
+    }
+    getCanvasPointerPosition(event){
         const rect = cv.getBoundingClientRect();
-        const canvasPosition = vec(
+        return vec(
             (event.clientX - rect.left) * cv.width / rect.width,
             (event.clientY - rect.top) * cv.height / rect.height
         );
-        return canvasToWorld(canvasPosition, this.cam);
+    }
+    isPointerOverMinimap(position){
+        const y = cv.height - MINIMAP.height - MINIMAP.margin;
+        return position.x >= MINIMAP.x && position.x <= MINIMAP.x + MINIMAP.width &&
+            position.y >= y && position.y <= y + MINIMAP.height;
+    }
+    onWheel(event){
+        event.preventDefault();
+        const pointerPosition = this.getCanvasPointerPosition(event);
+        const worldPosition = canvasToWorld(pointerPosition, this.cam);
+        const zoomFactor = Math.exp(-event.deltaY * 0.001);
+        this.cam.zoom = Math.max(0.2, Math.min(4, this.cam.zoom * zoomFactor));
+        this.cam.pos = worldPosition.sub(
+            pointerPosition.sub(vec(cv.width/2, cv.height/2)).mul(1 / this.cam.zoom)
+        );
+        this.pointerWorldPosition = this.getWorldPointerPosition(event);
     }
     onPointerDown(event){
         const rect = cv.getBoundingClientRect();
@@ -316,6 +338,10 @@ class Space{
                 return;
             }
             this.nodePickerOpen = false;
+        }
+        if(this.isPointerOverMinimap(screenPosition)){
+            event.preventDefault();
+            return;
         }
         const pointerPosition = this.getWorldPointerPosition(event);
         if(this.eraserMode){
@@ -364,6 +390,11 @@ class Space{
                 return;
             }
         }
+        this.isPanning = true;
+        this.lastPanPosition = screenPosition;
+        cv.setPointerCapture(event.pointerId);
+        cv.style.cursor = "grabbing";
+        event.preventDefault();
     }
     onPointerMove(event){
         const rect = cv.getBoundingClientRect();
@@ -373,6 +404,22 @@ class Space{
         );
         this.hoveredPickerItem = this.getPickerItemAt(screenPosition);
         this.pointerWorldPosition = this.getWorldPointerPosition(event);
+        if(this.isPanning){
+            const screenDelta = screenPosition.sub(this.lastPanPosition);
+            this.cam.pos = this.cam.pos.sub(screenDelta.mul(1 / this.cam.zoom));
+            this.lastPanPosition = screenPosition;
+            this.pointerWorldPosition = this.getWorldPointerPosition(event);
+            cv.style.cursor = "grabbing";
+            return;
+        }
+        if(this.isPointerOverMinimap(screenPosition) && this.draggedNodeVisual === null &&
+           this.draggedSlotVisual === null && this.connectingSlotVisual === null){
+            this.hoveredSlotVisual = null;
+            this.hoveredSlotCanDragAngle = false;
+            this.hoveredEraseTarget = null;
+            cv.style.cursor = "";
+            return;
+        }
         if(this.eraserMode){
             this.hoveredEraseTarget = this.hoveredPickerItem === null
                 ? this.getEraseTargetAt(this.pointerWorldPosition)
@@ -424,27 +471,10 @@ class Space{
             return;
         }
 
-        const pointerPosition = this.getWorldPointerPosition(event);
-        let isOverDraggable = false;
-        for(let i = this.nodeVisuals.length - 1; i >= 0 && !isOverDraggable; i--){
-            const nodeVisual = this.nodeVisuals[i];
-            for(let j = nodeVisual.sloteVisuals.length - 1; j >= 0; j--){
-                const slotVisual = nodeVisual.sloteVisuals[j];
-                if(pointerPosition.sub(slotVisual.getPosition()).length() <= slotVisual.radius + SLOT_ANGLE_PADDING / this.cam.zoom){
-                    isOverDraggable = true;
-                    break;
-                }
-            }
-            const halfSize = nodeVisual.size.mul(.5);
-            if(Math.abs(pointerPosition.x - nodeVisual.pos.x) <= halfSize.x &&
-               Math.abs(pointerPosition.y - nodeVisual.pos.y) <= halfSize.y){
-                isOverDraggable = true;
-            }
-        }
-        cv.style.cursor = isOverDraggable ? "grab" : "";
+        cv.style.cursor = "grab";
     }
     onPointerUp(event){
-        if(this.draggedNodeVisual === null && this.draggedSlotVisual === null && this.connectingSlotVisual === null) return;
+        if(this.draggedNodeVisual === null && this.draggedSlotVisual === null && this.connectingSlotVisual === null && !this.isPanning) return;
         if(this.connectingSlotVisual !== null){
             this.onPointerMove(event);
             const targetSlotVisual = this.getSlotVisualAt(
@@ -457,9 +487,75 @@ class Space{
         this.draggedNodeVisual = null;
         this.draggedSlotVisual = null;
         this.connectingSlotVisual = null;
+        this.isPanning = false;
+        this.lastPanPosition = null;
         if(cv.hasPointerCapture(event.pointerId)) cv.releasePointerCapture(event.pointerId);
         cv.style.cursor = "";
         this.onPointerMove(event);
+    }
+    drawMinimap(){
+        const map = {x: MINIMAP.x, y: cv.height - MINIMAP.height - MINIMAP.margin, width: MINIMAP.width, height: MINIMAP.height, padding: 10};
+        const viewWidth = cv.width / this.cam.zoom;
+        const viewHeight = cv.height / this.cam.zoom;
+        let minX = this.cam.pos.x - viewWidth/2;
+        let maxX = this.cam.pos.x + viewWidth/2;
+        let minY = this.cam.pos.y - viewHeight/2;
+        let maxY = this.cam.pos.y + viewHeight/2;
+        for(const nodeVisual of this.nodeVisuals){
+            const halfSize = nodeVisual.size.mul(.5);
+            minX = Math.min(minX, nodeVisual.pos.x - halfSize.x);
+            maxX = Math.max(maxX, nodeVisual.pos.x + halfSize.x);
+            minY = Math.min(minY, nodeVisual.pos.y - halfSize.y);
+            maxY = Math.max(maxY, nodeVisual.pos.y + halfSize.y);
+        }
+        const worldWidth = Math.max(1, maxX - minX);
+        const worldHeight = Math.max(1, maxY - minY);
+        const paddingX = Math.max(24, worldWidth * .06);
+        const paddingY = Math.max(24, worldHeight * .06);
+        minX -= paddingX;
+        maxX += paddingX;
+        minY -= paddingY;
+        maxY += paddingY;
+        const scale = Math.min(
+            (map.width - map.padding * 2) / (maxX - minX),
+            (map.height - map.padding * 2) / (maxY - minY)
+        );
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+        const toMap = position => vec(
+            map.x + map.width/2 + (position.x - centerX) * scale,
+            map.y + map.height/2 + (position.y - centerY) * scale
+        );
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.roundRect(map.x, map.y, map.width, map.height, 8);
+        ctx.fillStyle = "rgba(11, 16, 32, 0.88)";
+        ctx.fill();
+        ctx.strokeStyle = STROKE_COL;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.roundRect(map.x + 1, map.y + 1, map.width - 2, map.height - 2, 7);
+        ctx.clip();
+        for(const nodeVisual of this.nodeVisuals){
+            const center = toMap(nodeVisual.pos);
+            const nodeWidth = Math.max(4, nodeVisual.size.x * scale);
+            const nodeHeight = Math.max(4, nodeVisual.size.y * scale);
+            ctx.fillStyle = nodeVisual.node === this.startNode ? "#E8B85A" : "#8AA2C0";
+            ctx.fillRect(center.x - nodeWidth/2, center.y - nodeHeight/2, nodeWidth, nodeHeight);
+        }
+        const viewTopLeft = toMap(vec(this.cam.pos.x - viewWidth/2, this.cam.pos.y - viewHeight/2));
+        const viewBottomRight = toMap(vec(this.cam.pos.x + viewWidth/2, this.cam.pos.y + viewHeight/2));
+        ctx.strokeStyle = "#FFFFFF";
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(
+            viewTopLeft.x,
+            viewTopLeft.y,
+            Math.max(2, viewBottomRight.x - viewTopLeft.x),
+            Math.max(2, viewBottomRight.y - viewTopLeft.y)
+        );
+        ctx.restore();
     }
     draw(){
         ctx.fillStyle = BACKGROUND_COL;
@@ -481,6 +577,7 @@ class Space{
             nodeVisual.draw(this.cam);
         }
         this.drawNodePicker();
+        this.drawMinimap();
     }
 }
 const cam = {}
