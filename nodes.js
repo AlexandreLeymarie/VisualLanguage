@@ -97,7 +97,7 @@ class NumberNode extends Node{
     constructor(value){
         super();
         this.name = String(value);
-        this.valueSlot = new Slot(this, NumberType, DIRECTIONS.OUTPUT, "value");
+        this.valueSlot = new Slot(this, NumberType, DIRECTIONS.OUTPUT);
         this.valueSlot.value = value;
         this.slots = [this.valueSlot];
     }
@@ -107,9 +107,9 @@ class AddNode extends Node{
     constructor(){
         super();
         this.name = "+";
-        this.aSlot = new Slot(this, NumberType, DIRECTIONS.INPUT, "A");
-        this.bSlot = new Slot(this, NumberType, DIRECTIONS.INPUT, "B");
-        this.sumSlot = new Slot(this, NumberType, DIRECTIONS.OUTPUT, "sum");
+        this.aSlot = new Slot(this, NumberType, DIRECTIONS.INPUT);
+        this.bSlot = new Slot(this, NumberType, DIRECTIONS.INPUT);
+        this.sumSlot = new Slot(this, NumberType, DIRECTIONS.OUTPUT);
 
         this.slots = [this.aSlot, this.bSlot, this.sumSlot];
     }
@@ -129,9 +129,9 @@ class EqualityNode extends Node{
     constructor(){
         super();
         this.name = "=";
-        this.aSlot = new Slot(this, NumberType, DIRECTIONS.INPUT, "A");
-        this.bSlot = new Slot(this, NumberType, DIRECTIONS.INPUT, "B");
-        this.outputSlot = new Slot(this, BoolType, DIRECTIONS.OUTPUT, "equal?");
+        this.aSlot = new Slot(this, NumberType, DIRECTIONS.INPUT);
+        this.bSlot = new Slot(this, NumberType, DIRECTIONS.INPUT);
+        this.outputSlot = new Slot(this, BoolType, DIRECTIONS.OUTPUT);
 
         this.slots = [this.aSlot, this.bSlot, this.outputSlot];
     }
@@ -151,8 +151,8 @@ class NumberToStringNode extends Node{
     constructor(){
         super();
         this.name = "to string";
-        this.inputSlot = new Slot(this, NumberType, DIRECTIONS.INPUT, "number");
-        this.outputSlot = new Slot(this, StringType, DIRECTIONS.OUTPUT, "string");
+        this.inputSlot = new Slot(this, NumberType, DIRECTIONS.INPUT);
+        this.outputSlot = new Slot(this, StringType, DIRECTIONS.OUTPUT);
         this.slots = [this.inputSlot, this.outputSlot];
     }
     computeData(){
@@ -166,9 +166,9 @@ class PrintNode extends Node{
     constructor(){
         super();
         this.name = "print";
-        this.valueSlot = new Slot(this, StringType, DIRECTIONS.INPUT, "string");
-        this.controlInputSlot = new Slot(this, ControlType, DIRECTIONS.INPUT, "controlInput");
-        this.controlOutputSlot = new Slot(this, ControlType, DIRECTIONS.OUTPUT, "controlOutput");
+        this.valueSlot = new Slot(this, StringType, DIRECTIONS.INPUT);
+        this.controlInputSlot = new Slot(this, ControlType, DIRECTIONS.INPUT);
+        this.controlOutputSlot = new Slot(this, ControlType, DIRECTIONS.OUTPUT);
         this.slots = [this.valueSlot, this.controlInputSlot, this.controlOutputSlot];
     }
     execute(){
@@ -185,8 +185,8 @@ class SplitNode extends Node{
     constructor(){
         super();
         this.name = "split"
-        this.conditionSlot = new Slot(this, BoolType, DIRECTIONS.INPUT, "condition");
-        this.controlInputSlot = new Slot(this, ControlType, DIRECTIONS.INPUT, "controlInput");
+        this.conditionSlot = new Slot(this, BoolType, DIRECTIONS.INPUT);
+        this.controlInputSlot = new Slot(this, ControlType, DIRECTIONS.INPUT);
         this.trueOutputSlot = new Slot(this, ControlType, DIRECTIONS.OUTPUT, "true");
         this.falseOutputSlot = new Slot(this, ControlType, DIRECTIONS.OUTPUT, "false");
         this.slots = [this.conditionSlot, this.controlInputSlot, this.trueOutputSlot, this.falseOutputSlot];
@@ -210,7 +210,7 @@ class StartNode extends Node{
     constructor(){
         super();
         this.name = "start";
-        this.controlOutputSlot = new Slot(this, ControlType, DIRECTIONS.OUTPUT, "start");
+        this.controlOutputSlot = new Slot(this, ControlType, DIRECTIONS.OUTPUT);
         this.slots = [this.controlOutputSlot];
     }
     resetConnectedGraphCachedValues(){

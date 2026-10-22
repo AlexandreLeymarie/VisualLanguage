@@ -832,10 +832,23 @@ class SlotVisual{
             ctx.stroke();
         }
         ctx.restore();
-        ctx.fillStyle = SLOT_TEXT_COL;
         let textSideSign = shift.x < 0 ? -1 : 1;
-        ctx.textAlign = shift.x < 0 ? "right" : "left";
         const connectionSp = worldToCanvas(this.getConnectionPosition(), cam);
-        ctx.fillText(this.slot.name, sp.x+this.radius*textSideSign*cam.zoom, connectionSp.y);
+        const labelX = sp.x + (this.radius + 4) * textSideSign * cam.zoom;
+        const typeName = this.slot.type.name.replace(/Type$/, "");
+        ctx.textAlign = shift.x < 0 ? "right" : "left";
+        ctx.textBaseline = "middle";
+        if(this.slot.name !== null && this.slot.name !== ""){
+            ctx.fillStyle = NODE_TEXT_COL;
+            ctx.font = `bold ${12 * cam.zoom}px Helvetica`;
+            ctx.fillText(this.slot.name, labelX, connectionSp.y - 7 * cam.zoom);
+            ctx.fillStyle = "#7F9BB9";
+            ctx.font = `${10 * cam.zoom}px Helvetica`;
+            ctx.fillText(typeName, labelX, connectionSp.y + 7 * cam.zoom);
+        } else {
+            ctx.fillStyle = "#7F9BB9";
+            ctx.font = `${10 * cam.zoom}px Helvetica`;
+            ctx.fillText(typeName, labelX, connectionSp.y);
+        }
     }
 }
