@@ -6,6 +6,7 @@ const NODE_TEXT_COL = "#F1F5F9";
 const SLOT_DRAG_PADDING = 3;
 const SLOT_ANGLE_PADDING = 0;
 const SLOT_HOVER_PADDING = 18;
+const CONNECTION_LINE_WIDTH = 2;
 const MINIMAP = {x: 16, width: 200, height: 120, margin: 16};
 
 const cv = document.getElementById("canvas");
@@ -759,7 +760,11 @@ class SlotVisual{
         const angle = this.getFacingAngle();
         const outward = vec(Math.cos(angle), Math.sin(angle));
         if(this.slot.type === ControlType){
-            // Both triangle directions connect at the vertex or midpoint of the base edge.
+            // Input controls connect at the base; outputs connect at the flat tip.
+            if(this.slot.direction === DIRECTIONS.OUTPUT){
+                const tipInset = CONNECTION_LINE_WIDTH / (2 * 0.43);
+                return position.add(outward.mul(this.radius - tipInset));
+            }
             return position.add(outward.mul(this.radius));
         }
         if(this.slot.direction === DIRECTIONS.INPUT) return position;
@@ -769,19 +774,32 @@ class SlotVisual{
     }
     drawConnections(cam){
         if(this.slot.direction !== DIRECTIONS.INPUT) return;
-        const start = worldToCanvas(this.getConnectionPosition(), cam);
+        const startPosition = this.getConnectionPosition();
+        const start = worldToCanvas(startPosition, cam);
         for(let connectedSlot of this.slot.connectedSlots){
             const connectedVisual = this.space.slotVisuals.get(connectedSlot);
             if(connectedVisual === undefined) continue;
-            const end = worldToCanvas(connectedVisual.getConnectionPosition(), cam);
+            const endPosition = connectedVisual.getConnectionPosition();
+            const end = worldToCanvas(endPosition, cam);
+            const handleLength = endPosition.sub(startPosition).length() * 0.45;
+            const startFacing = this.getFacingAngle();
+            const endFacing = connectedVisual.getFacingAngle();
+            const control1 = worldToCanvas(
+                startPosition.add(vec(Math.cos(startFacing), Math.sin(startFacing)).mul(handleLength)),
+                cam
+            );
+            const control2 = worldToCanvas(
+                endPosition.add(vec(Math.cos(endFacing), Math.sin(endFacing)).mul(handleLength)),
+                cam
+            );
             ctx.beginPath();
             ctx.moveTo(start.x, start.y);
-            ctx.lineTo(end.x, end.y);
+            ctx.bezierCurveTo(control1.x, control1.y, control2.x, control2.y, end.x, end.y);
             const eraseTarget = this.space.hoveredEraseTarget;
             const isEraseTarget = this.space.eraserMode && eraseTarget?.inputSlot === this.slot &&
                 eraseTarget.outputSlot === connectedSlot;
             ctx.strokeStyle = isEraseTarget ? "#EF4444" : STROKE_COL;
-            ctx.lineWidth = isEraseTarget ? cam.zoom*4 : cam.zoom*2;
+            ctx.lineWidth = isEraseTarget ? cam.zoom*4 : cam.zoom*CONNECTION_LINE_WIDTH;
             ctx.stroke();
         }
     }
@@ -789,9 +807,13 @@ class SlotVisual{
         const radius = cam.zoom * this.radius;
         if(this.slot.type === ControlType){
             const direction = this.slot.direction === DIRECTIONS.OUTPUT ? 1 : -1;
-            ctx.moveTo(direction * radius, 0);
+            const tipHalfWidth = cam.zoom * CONNECTION_LINE_WIDTH / 2;
+            const tipInset = tipHalfWidth / 0.43;
+            const flatTipX = radius - tipInset;
+            ctx.moveTo(direction * flatTipX, -tipHalfWidth);
             ctx.lineTo(-direction * radius, -radius * 0.86);
             ctx.lineTo(-direction * radius, radius * 0.86);
+            ctx.lineTo(direction * flatTipX, tipHalfWidth);
             ctx.closePath();
             return;
         }
