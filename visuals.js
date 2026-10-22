@@ -601,38 +601,27 @@ class Space{
         ctx.restore();
     }
     drawDotGrid(){
+        const spacing = 48;
         const halfViewWidth = cv.width / (2 * this.cam.zoom);
         const halfViewHeight = cv.height / (2 * this.cam.zoom);
         const left = this.cam.pos.x - halfViewWidth;
         const right = this.cam.pos.x + halfViewWidth;
         const top = this.cam.pos.y - halfViewHeight;
         const bottom = this.cam.pos.y + halfViewHeight;
-        const dotRadius = 1.3;
+        const dotRadius = Math.max(1, 1.3 * this.cam.zoom);
 
-        const zoomLevel = Math.log2(this.cam.zoom);
-        const gridLevel = Math.floor(zoomLevel);
-        const blend = zoomLevel - gridLevel;
-        const drawGrid = (spacing, opacity) => {
-            if(opacity <= 0) return;
-            const firstX = Math.ceil(left / spacing) * spacing;
-            const firstY = Math.ceil(top / spacing) * spacing;
-            ctx.beginPath();
-            for(let x = firstX; x <= right; x += spacing){
-                for(let y = firstY; y <= bottom; y += spacing){
-                    const point = worldToCanvas(vec(x, y), this.cam);
-                    ctx.moveTo(point.x + dotRadius, point.y);
-                    ctx.arc(point.x, point.y, dotRadius, 0, Math.PI * 2);
-                }
+        const firstX = Math.ceil(left / spacing) * spacing;
+        const firstY = Math.ceil(top / spacing) * spacing;
+        ctx.beginPath();
+        for(let x = firstX; x <= right; x += spacing){
+            for(let y = firstY; y <= bottom; y += spacing){
+                const point = worldToCanvas(vec(x, y), this.cam);
+                ctx.moveTo(point.x + dotRadius, point.y);
+                ctx.arc(point.x, point.y, dotRadius, 0, Math.PI * 2);
             }
-            ctx.save();
-            ctx.globalAlpha = opacity;
-            ctx.fillStyle = "rgba(127, 155, 185, 0.3)";
-            ctx.fill();
-            ctx.restore();
-        };
-
-        drawGrid(48 * 2 ** -gridLevel, 1 - blend);
-        drawGrid(48 * 2 ** -(gridLevel + 1), blend);
+        }
+        ctx.fillStyle = "rgba(127, 155, 185, 0.3)";
+        ctx.fill();
     }
     draw(){
         ctx.fillStyle = BACKGROUND_COL;
