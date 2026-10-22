@@ -44,6 +44,7 @@ class Slot{
             if(this.connectedSlots.length > 0) return this.connectedSlots[0].getValue();
             return null;
         } else {
+            this.node.computeData?.();
             return this.value;
         }
     }
@@ -91,7 +92,6 @@ class AddNode extends Node{
         this.aSlot = new Slot(this, NumberType, DIRECTIONS.INPUT, "A");
         this.bSlot = new Slot(this, NumberType, DIRECTIONS.INPUT, "B");
         this.sumSlot = new Slot(this, NumberType, DIRECTIONS.OUTPUT, "sum");
-        this.sumSlot.getValue = this.getSum.bind(this);
 
         this.slots = [this.aSlot, this.bSlot, this.sumSlot];
     }
@@ -105,10 +105,6 @@ class AddNode extends Node{
         }
     }
 
-    getSum(){
-        this.computeData();
-        return this.sumSlot.value;
-    }
 }
 
 class EqualityNode extends Node{
@@ -118,7 +114,6 @@ class EqualityNode extends Node{
         this.aSlot = new Slot(this, NumberType, DIRECTIONS.INPUT, "A");
         this.bSlot = new Slot(this, NumberType, DIRECTIONS.INPUT, "B");
         this.outputSlot = new Slot(this, BoolType, DIRECTIONS.OUTPUT, "equal?");
-        this.outputSlot.getValue = this.getAreEqual.bind(this);
 
         this.slots = [this.aSlot, this.bSlot, this.outputSlot];
     }
@@ -132,10 +127,6 @@ class EqualityNode extends Node{
         }
     }
 
-    getAreEqual(){
-        this.computeData();
-        return this.outputSlot.value;
-    }
 }
 
 class NumberToStringNode extends Node{
@@ -144,17 +135,12 @@ class NumberToStringNode extends Node{
         this.name = "to string";
         this.inputSlot = new Slot(this, NumberType, DIRECTIONS.INPUT, "number");
         this.outputSlot = new Slot(this, StringType, DIRECTIONS.OUTPUT, "string");
-        this.outputSlot.getValue = this.getString.bind(this);
         this.slots = [this.inputSlot, this.outputSlot];
     }
     computeData(){
         let n = this.inputSlot.getValue();
         if(n === null) return;
         this.outputSlot.value = String(n);
-    }
-    getString(){
-        this.computeData();
-        return this.outputSlot.value;
     }
 }
 
