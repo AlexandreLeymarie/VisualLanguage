@@ -836,6 +836,6 @@ class SlotVisual{
         let textSideSign = shift.x < 0 ? -1 : 1;
         ctx.textAlign = shift.x < 0 ? "right" : "left";
         const connectionSp = worldToCanvas(this.getConnectionPosition(), cam);
-        ctx.fillText(this.slot.name, sp.x+this.radius*textSideSign, connectionSp.y);
+        ctx.fillText(this.slot.name, sp.x+this.radius*textSideSign*cam.zoom, connectionSp.y);
     }
 }
