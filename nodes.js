@@ -37,7 +37,21 @@ class Slot{
         }
     }
     canConnectToSlot(slot){
-        return slot instanceof Slot && slot.direction !== this.direction && slot.type === this.type;
+        return this.getConnectionError(slot) === null;
+    }
+    getConnectionError(slot){
+        if(!(slot instanceof Slot)) return "A slot cannot connect to a non-slot target.";
+        if(slot === this) return "A slot cannot connect to itself.";
+        if(slot.direction === this.direction){
+            const direction = this.direction === DIRECTIONS.INPUT ? "input" : "output";
+            return `An ${direction} slot cannot connect to another ${direction} slot.`;
+        }
+        if(slot.type !== this.type){
+            const sourceType = this.type.name.replace(/Type$/, "").toLowerCase();
+            const targetType = slot.type.name.replace(/Type$/, "").toLowerCase();
+            return `Slot types must match; this connection pairs a ${sourceType} slot with a ${targetType} slot.`;
+        }
+        return null;
     }
     getValue(){
         if(this.direction == DIRECTIONS.INPUT){

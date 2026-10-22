@@ -557,6 +557,48 @@ class Space{
         );
         ctx.restore();
     }
+    drawConnectionTooltip(){
+        if(this.connectingSlotVisual === null || this.hoveredSlotVisual === null ||
+           this.pointerWorldPosition === null) return;
+        const error = this.connectingSlotVisual.slot.getConnectionError(this.hoveredSlotVisual.slot);
+        if(error === null) return;
+
+        ctx.save();
+        ctx.font = "13px Helvetica";
+        const maxTextWidth = Math.max(48, Math.min(300, cv.width - 32));
+        const lines = [];
+        let line = "";
+        for(const word of error.split(/\s+/)){
+            const candidate = line.length === 0 ? word : `${line} ${word}`;
+            if(line.length > 0 && ctx.measureText(candidate).width > maxTextWidth){
+                lines.push(line);
+                line = word;
+            } else {
+                line = candidate;
+            }
+        }
+        if(line.length > 0) lines.push(line);
+        const lineHeight = 18;
+        const boxWidth = Math.min(maxTextWidth + 20,
+            Math.max(...lines.map(text => ctx.measureText(text).width)) + 20);
+        const boxHeight = lines.length * lineHeight + 12;
+        const pointer = worldToCanvas(this.pointerWorldPosition, this.cam);
+        const x = Math.max(8, Math.min(pointer.x + 14, cv.width - boxWidth - 8));
+        const y = Math.max(8, Math.min(pointer.y + 16, cv.height - boxHeight - 8));
+
+        ctx.beginPath();
+        ctx.roundRect(x, y, boxWidth, boxHeight, 6);
+        ctx.fillStyle = "#321F28";
+        ctx.fill();
+        ctx.strokeStyle = "#EF7777";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = NODE_TEXT_COL;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        lines.forEach((text, index) => ctx.fillText(text, x + 10, y + 6 + index * lineHeight));
+        ctx.restore();
+    }
     draw(){
         ctx.fillStyle = BACKGROUND_COL;
         ctx.fillRect(0, 0, cv.width, cv.height);
@@ -578,6 +620,7 @@ class Space{
         }
         this.drawNodePicker();
         this.drawMinimap();
+        this.drawConnectionTooltip();
     }
 }
 const cam = {}
