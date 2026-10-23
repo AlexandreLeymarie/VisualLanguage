@@ -6,6 +6,80 @@ class ControlType{}
 
 const DIRECTIONS = {OUTPUT: "OUTPUT", INPUT: "INPUT"};
 
+function getPromptFlowConnectionError(firstSlot, secondSlot){
+    const inputSlot = firstSlot.direction === DIRECTIONS.INPUT ? firstSlot : secondSlot;
+    const replacedInput = inputSlot.type !== ControlType && inputSlot.connectedSlots.length > 0
+        ? inputSlot
+        : null;
+    const getConnections = slot => {
+        const connections = slot.connectedSlots.filter(connectedSlot =>
+            replacedInput === null || (slot !== replacedInput && connectedSlot !== replacedInput)
+        );
+        const candidate = slot === firstSlot ? secondSlot : slot === secondSlot ? firstSlot : null;
+        if(candidate !== null && !connections.includes(candidate)) connections.push(candidate);
+        return connections;
+    };
+
+    const nodes = new Set();
+    const pendingNodes = [firstSlot.node, secondSlot.node];
+    while(pendingNodes.length > 0){
+        const node = pendingNodes.pop();
+        if(nodes.has(node)) continue;
+        nodes.add(node);
+        for(const slot of node.slots){
+            for(const connectedSlot of getConnections(slot)) pendingNodes.push(connectedSlot.node);
+        }
+    }
+
+    const isControlNode = node => node.slots.some(slot => slot.type === ControlType);
+    for(const promptNode of nodes){
+        if(!(promptNode instanceof PromptNode)) continue;
+        const firstControlNodes = new Set();
+        const visitedDataOutputs = new Set();
+        const pendingDataOutputs = [promptNode.valueSlot];
+        while(pendingDataOutputs.length > 0){
+            const outputSlot = pendingDataOutputs.pop();
+            if(visitedDataOutputs.has(outputSlot)) continue;
+            visitedDataOutputs.add(outputSlot);
+            for(const input of getConnections(outputSlot)){
+                if(input.direction !== DIRECTIONS.INPUT || input.type === ControlType) continue;
+                if(isControlNode(input.node)){
+                    firstControlNodes.add(input.node);
+                    continue;
+                }
+                for(const output of input.node.getOutputSlots()){
+                    if(output.type !== ControlType) pendingDataOutputs.push(output);
+                }
+            }
+        }
+
+        for(const controlNode of firstControlNodes){
+            for(const startNode of nodes){
+                if(!(startNode instanceof StartNode)) continue;
+                const visitedControlNodes = new Set();
+                const pendingControlNodes = [startNode];
+                while(pendingControlNodes.length > 0){
+                    const currentNode = pendingControlNodes.pop();
+                    if(currentNode === promptNode || visitedControlNodes.has(currentNode)) continue;
+                    if(currentNode === controlNode){
+                        return "This prompt value may be used before the prompt runs; every control path to its first consumer must pass through this prompt.";
+                    }
+                    visitedControlNodes.add(currentNode);
+                    for(const output of currentNode.getOutputSlots()){
+                        if(output.type !== ControlType) continue;
+                        for(const connectedSlot of getConnections(output)){
+                            if(connectedSlot.direction === DIRECTIONS.INPUT && connectedSlot.type === ControlType){
+                                pendingControlNodes.push(connectedSlot.node);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return null;
+}
+
 class Slot{
     constructor(node, type, direction, name = null, doc = null){
         this.node = node;
@@ -50,6 +124,13 @@ class Slot{
             const sourceType = this.type.name.replace(/Type$/, "").toLowerCase();
             const targetType = slot.type.name.replace(/Type$/, "").toLowerCase();
             return `Slot types must match; this connection pairs a ${sourceType} slot with a ${targetType} slot.`;
+        }
+        if(this.direction === DIRECTIONS.INPUT){
+            const promptFlowError = getPromptFlowConnectionError(slot, this);
+            if(promptFlowError !== null) return promptFlowError;
+        } else {
+            const promptFlowError = getPromptFlowConnectionError(this, slot);
+            if(promptFlowError !== null) return promptFlowError;
         }
         return null;
     }
@@ -98,6 +179,17 @@ class NumberNode extends Node{
         super();
         this.name = String(value);
         this.valueSlot = new Slot(this, NumberType, DIRECTIONS.OUTPUT);
+        this.valueSlot.value = value;
+        this.slots = [this.valueSlot];
+    }
+}
+
+class StringNode extends Node{
+    static displayName = "String";
+    constructor(value){
+        super();
+        this.name = value === "" ? '""' : value;
+        this.valueSlot = new Slot(this, StringType, DIRECTIONS.OUTPUT);
         this.valueSlot.value = value;
         this.slots = [this.valueSlot];
     }
@@ -159,6 +251,26 @@ class NumberToStringNode extends Node{
         let n = this.inputSlot.getValue();
         if(n === null) return;
         this.outputSlot.value = String(n);
+    }
+}
+
+class PromptNode extends Node{
+    static displayName = "Prompt";
+    constructor(){
+        super();
+        this.name = "prompt";
+        this.controlInputSlot = new Slot(this, ControlType, DIRECTIONS.INPUT);
+        this.valueSlot = new Slot(this, StringType, DIRECTIONS.OUTPUT);
+        this.controlOutputSlot = new Slot(this, ControlType, DIRECTIONS.OUTPUT);
+        this.slots = [this.controlInputSlot, this.valueSlot, this.controlOutputSlot];
+    }
+    execute(){
+        this.valueSlot.value = null;
+        const value = window.prompt("Enter a string:");
+        this.valueSlot.value = value ?? "";
+        for(const connectedSlot of [...this.controlOutputSlot.connectedSlots]){
+            connectedSlot.node.execute();
+        }
     }
 }
 
@@ -238,9 +350,11 @@ class StartNode extends Node{
 
 const NODE_TYPES = [
     NumberNode,
+    StringNode,
     AddNode,
     EqualityNode,
     NumberToStringNode,
+    PromptNode,
     PrintNode,
     SplitNode
 ];

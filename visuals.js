@@ -84,6 +84,10 @@ class Space{
                 return;
             }
             node = new NumberNode(value);
+        } else if(type.NodeType === StringNode){
+            const value = window.prompt("Enter a string:");
+            if(value === null) return;
+            node = new StringNode(value);
         } else {
             node = new type.NodeType();
         }
