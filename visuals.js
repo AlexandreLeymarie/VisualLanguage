@@ -1,6 +1,7 @@
 const BACKGROUND_COL = "#0B1020";
 const NODE_BACKGROUND_COL = "#17243A";
 const STROKE_COL = "#526783";
+const START_NODE_COL = "#E8B85A";
 const SLOT_TEXT_COL = "#A9B9D0";
 const NODE_TEXT_COL = "#F1F5F9";
 const SLOT_DRAG_PADDING = 3;
@@ -546,7 +547,7 @@ class Space{
             const center = toMap(nodeVisual.pos);
             const nodeWidth = Math.max(4, nodeVisual.size.x * scale);
             const nodeHeight = Math.max(4, nodeVisual.size.y * scale);
-            ctx.fillStyle = nodeVisual.node === this.startNode ? "#E8B85A" : "#8AA2C0";
+            ctx.fillStyle = nodeVisual.node === this.startNode ? START_NODE_COL : "#8AA2C0";
             ctx.fillRect(center.x - nodeWidth/2, center.y - nodeHeight/2, nodeWidth, nodeHeight);
         }
         const viewTopLeft = toMap(vec(this.cam.pos.x - viewWidth/2, this.cam.pos.y - viewHeight/2));
@@ -688,7 +689,8 @@ class NodeVisual{
         ctx.fill();
         const isEraseTarget = this.space.eraserMode &&
             this.space.hoveredEraseTarget?.nodeVisual === this;
-        ctx.strokeStyle = isEraseTarget ? "#EF4444" : STROKE_COL;
+        ctx.strokeStyle = isEraseTarget ? "#EF4444" :
+            this.node === this.space.startNode ? START_NODE_COL : STROKE_COL;
         ctx.lineWidth = isEraseTarget ? cam.zoom*3 : cam.zoom*2;
         ctx.stroke();
         ctx.fillStyle = NODE_TEXT_COL;
