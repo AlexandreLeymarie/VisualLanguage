@@ -6,6 +6,10 @@ class ControlType{}
 
 const DIRECTIONS = {OUTPUT: "OUTPUT", INPUT: "INPUT"};
 
+function isValidNumberString(value){
+    return value.trim() !== "" && Number.isFinite(Number(value));
+}
+
 function getPromptFlowConnectionError(firstSlot, secondSlot){
     const inputSlot = firstSlot.direction === DIRECTIONS.INPUT ? firstSlot : secondSlot;
     const replacedInput = inputSlot.type !== ControlType && inputSlot.connectedSlots.length > 0
@@ -184,6 +188,21 @@ class NumberNode extends Node{
     }
 }
 
+class RandomNode extends Node{
+    static displayName = "random";
+    constructor(){
+        super();
+        this.name = "random";
+        this.valueSlot = new Slot(this, NumberType, DIRECTIONS.OUTPUT);
+        this.slots = [this.valueSlot];
+    }
+    computeData(){
+        if(this.valueSlot.value === null){
+            this.valueSlot.value = Math.random();
+        }
+    }
+}
+
 class StringNode extends Node{
     static displayName = "String";
     constructor(value){
@@ -217,6 +236,26 @@ class AddNode extends Node{
 
 }
 
+class MultiplicationNode extends Node{
+    static displayName = "×";
+    constructor(){
+        super();
+        this.name = "×";
+        this.aSlot = new Slot(this, NumberType, DIRECTIONS.INPUT);
+        this.bSlot = new Slot(this, NumberType, DIRECTIONS.INPUT);
+        this.productSlot = new Slot(this, NumberType, DIRECTIONS.OUTPUT);
+        this.slots = [this.aSlot, this.bSlot, this.productSlot];
+    }
+    computeData(){
+        const a = this.aSlot.getValue();
+        const b = this.bSlot.getValue();
+        if(a === null || b === null) return;
+        if(this.productSlot.value === null){
+            this.productSlot.value = a * b;
+        }
+    }
+}
+
 class EqualityNode extends Node{
     constructor(){
         super();
@@ -239,6 +278,44 @@ class EqualityNode extends Node{
 
 }
 
+class GreaterThanNode extends Node{
+    constructor(){
+        super();
+        this.name = "a > b";
+        this.aSlot = new Slot(this, NumberType, DIRECTIONS.INPUT, "a");
+        this.bSlot = new Slot(this, NumberType, DIRECTIONS.INPUT, "b");
+        this.outputSlot = new Slot(this, BoolType, DIRECTIONS.OUTPUT);
+        this.slots = [this.aSlot, this.bSlot, this.outputSlot];
+    }
+    computeData(){
+        const a = this.aSlot.getValue();
+        const b = this.bSlot.getValue();
+        if(a === null || b === null) return;
+        if(this.outputSlot.value === null){
+            this.outputSlot.value = a > b;
+        }
+    }
+}
+
+class LessThanNode extends Node{
+    constructor(){
+        super();
+        this.name = "a < b";
+        this.aSlot = new Slot(this, NumberType, DIRECTIONS.INPUT, "a");
+        this.bSlot = new Slot(this, NumberType, DIRECTIONS.INPUT, "b");
+        this.outputSlot = new Slot(this, BoolType, DIRECTIONS.OUTPUT);
+        this.slots = [this.aSlot, this.bSlot, this.outputSlot];
+    }
+    computeData(){
+        const a = this.aSlot.getValue();
+        const b = this.bSlot.getValue();
+        if(a === null || b === null) return;
+        if(this.outputSlot.value === null){
+            this.outputSlot.value = a < b;
+        }
+    }
+}
+
 class NumberToStringNode extends Node{
     constructor(){
         super();
@@ -251,6 +328,58 @@ class NumberToStringNode extends Node{
         let n = this.inputSlot.getValue();
         if(n === null) return;
         this.outputSlot.value = String(n);
+    }
+}
+
+class StringToNumberNode extends Node{
+    static displayName = "to number";
+    constructor(){
+        super();
+        this.name = "to number";
+        this.inputSlot = new Slot(this, StringType, DIRECTIONS.INPUT);
+        this.outputSlot = new Slot(this, NumberType, DIRECTIONS.OUTPUT);
+        this.slots = [this.inputSlot, this.outputSlot];
+    }
+    computeData(){
+        const value = this.inputSlot.getValue();
+        if(value === null) return;
+        const number = Number(value);
+        if(!isValidNumberString(value)){
+            throw new Error(`Cannot convert ${JSON.stringify(value)} to a number.`);
+        }
+        this.outputSlot.value = number;
+    }
+}
+
+class IsNumberNode extends Node{
+    static displayName = "Is number";
+    constructor(){
+        super();
+        this.name = "is number";
+        this.inputSlot = new Slot(this, StringType, DIRECTIONS.INPUT);
+        this.outputSlot = new Slot(this, BoolType, DIRECTIONS.OUTPUT);
+        this.slots = [this.inputSlot, this.outputSlot];
+    }
+    computeData(){
+        const value = this.inputSlot.getValue();
+        if(value === null) return;
+        this.outputSlot.value = isValidNumberString(value);
+    }
+}
+
+class FloorNode extends Node{
+    static displayName = "Floor";
+    constructor(){
+        super();
+        this.name = "floor";
+        this.inputSlot = new Slot(this, NumberType, DIRECTIONS.INPUT);
+        this.outputSlot = new Slot(this, NumberType, DIRECTIONS.OUTPUT);
+        this.slots = [this.inputSlot, this.outputSlot];
+    }
+    computeData(){
+        const value = this.inputSlot.getValue();
+        if(value === null) return;
+        this.outputSlot.value = Math.floor(value);
     }
 }
 
@@ -350,10 +479,17 @@ class StartNode extends Node{
 
 const NODE_TYPES = [
     NumberNode,
+    RandomNode,
     StringNode,
     AddNode,
+    MultiplicationNode,
     EqualityNode,
+    GreaterThanNode,
+    LessThanNode,
     NumberToStringNode,
+    StringToNumberNode,
+    IsNumberNode,
+    FloorNode,
     PromptNode,
     PrintNode,
     SplitNode
