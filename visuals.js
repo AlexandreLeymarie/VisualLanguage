@@ -25,7 +25,7 @@ resizeCanvas();
 
 let worldToCanvas=(p,cam)=>p.sub(cam.pos).mul(cam.zoom).add(vec(cv.width/2,cv.height/2))
 let canvasToWorld=(p,cam)=>p.sub(vec(cv.width/2,cv.height/2)).mul(1/cam.zoom).add(cam.pos)
-const NODE_PICKER = {x: 16, y: 16, buttonWidth: 48, buttonHeight: 48, eraserX: 72, executeX: 128, executeWidth: 120, menuY: 76, menuWidth: 190, rowHeight: 32};
+const NODE_PICKER = {x: 16, y: 16, buttonWidth: 48, buttonHeight: 48, eraserX: 72, executeX: 128, executeWidth: 120, saveX: 256, loadX: 328, fileButtonWidth: 64, menuY: 76, menuWidth: 190, rowHeight: 32};
 
 
 class Space{
@@ -96,8 +96,186 @@ class Space{
         this.nodes.push(node);
         this.nodeVisuals.push(new NodeVisual(node, this.cam.pos.copy(), this));
     }
+    serializeProgram(){
+        const nodeIndices = new Map(this.nodes.map((node, index) => [node, index]));
+        const nodeVisuals = new Map(this.nodeVisuals.map(nodeVisual => [nodeVisual.node, nodeVisual]));
+        const nodes = this.nodes.map(node => {
+            const record = {
+                type: node.constructor.name
+            };
+            if(node instanceof NumberNode || node instanceof StringNode){
+                record.value = node.valueSlot.value;
+            }
+            return record;
+        });
+        const nodeVisualData = this.nodes.map(node => {
+            const nodeVisual = nodeVisuals.get(node);
+            return {
+                position: {x: nodeVisual.pos.x, y: nodeVisual.pos.y},
+                slotAngles: node.slots.map(slot => this.slotVisuals.get(slot)?.angle ?? 0)
+            };
+        });
+        const connections = [];
+        for(const node of this.nodes){
+            for(const inputSlot of node.getInputSlots()){
+                for(const outputSlot of inputSlot.connectedSlots){
+                    if(outputSlot.direction !== DIRECTIONS.OUTPUT) continue;
+                    connections.push({
+                        output: {
+                            node: nodeIndices.get(outputSlot.node),
+                            slot: outputSlot.node.slots.indexOf(outputSlot)
+                        },
+                        input: {
+                            node: nodeIndices.get(inputSlot.node),
+                            slot: inputSlot.node.slots.indexOf(inputSlot)
+                        }
+                    });
+                }
+            }
+        }
+        return {
+            version: 2,
+            data: {nodes, connections},
+            visual: {
+                camera: {x: this.cam.pos.x, y: this.cam.pos.y, zoom: this.cam.zoom},
+                nodes: nodeVisualData
+            }
+        };
+    }
+    saveProgram(){
+        const file = new Blob([JSON.stringify(this.serializeProgram(), null, 2)], {
+            type: "application/json"
+        });
+        const url = URL.createObjectURL(file);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "visual-language-program.json";
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+    loadProgram(program){
+        let records;
+        let visualRecords;
+        let connections;
+        let camera;
+        if(program?.version === 2 && Array.isArray(program.data?.nodes) &&
+           Array.isArray(program.data?.connections) && Array.isArray(program.visual?.nodes)){
+            records = program.data.nodes;
+            connections = program.data.connections;
+            visualRecords = program.visual.nodes;
+            camera = program.visual.camera || {};
+        } else if(program?.version === 1 && Array.isArray(program.nodes) &&
+                  Array.isArray(program.connections)){
+            // Keep compatibility with program files saved before data and visual state were separated.
+            records = program.nodes;
+            visualRecords = program.nodes;
+            connections = program.connections;
+            camera = program.camera || {};
+        } else {
+            throw new Error("Unsupported or invalid program file.");
+        }
+        if(records.length !== visualRecords.length){
+            throw new Error("Program file has mismatched data and visual node counts.");
+        }
+        const constructors = new Map([...NODE_TYPES, StartNode].map(NodeType => [NodeType.name, NodeType]));
+        const loadedNodes = records.map(record => {
+            const NodeType = constructors.get(record?.type);
+            if(!NodeType){
+                throw new Error("Program file contains an invalid node.");
+            }
+            if(NodeType === NumberNode){
+                if(!Number.isFinite(record.value)) throw new Error("Program file contains an invalid number node.");
+                return new NumberNode(record.value);
+            }
+            if(NodeType === StringNode){
+                if(typeof record.value !== "string") throw new Error("Program file contains an invalid string node.");
+                return new StringNode(record.value);
+            }
+            return new NodeType();
+        });
+        records.forEach((record, index) => {
+            const visualRecord = visualRecords[index];
+            if(!Number.isFinite(visualRecord?.position?.x) || !Number.isFinite(visualRecord?.position?.y)){
+                throw new Error("Program file contains an invalid node position.");
+            }
+            if(visualRecord.slotAngles !== undefined &&
+               (!Array.isArray(visualRecord.slotAngles) || visualRecord.slotAngles.length !== loadedNodes[index].slots.length ||
+                visualRecord.slotAngles.some(angle => !Number.isFinite(angle)))){
+                throw new Error("Program file contains invalid slot angles.");
+            }
+        });
+        if(loadedNodes.filter(node => node instanceof StartNode).length !== 1){
+            throw new Error("A program must contain exactly one start node.");
+        }
+
+        const loadedConnections = connections.map(connection => {
+            const outputRef = connection?.output;
+            const inputRef = connection?.input;
+            const outputNode = loadedNodes[outputRef?.node];
+            const inputNode = loadedNodes[inputRef?.node];
+            const outputSlot = outputNode?.slots[outputRef?.slot];
+            const inputSlot = inputNode?.slots[inputRef?.slot];
+            if(!outputSlot || !inputSlot || outputSlot.direction !== DIRECTIONS.OUTPUT ||
+               inputSlot.direction !== DIRECTIONS.INPUT || outputSlot.type !== inputSlot.type){
+                throw new Error("Program file contains an invalid connection.");
+            }
+            return {outputSlot, inputSlot};
+        });
+        loadedConnections.sort((a, b) => Number(b.outputSlot.type === ControlType) - Number(a.outputSlot.type === ControlType));
+        for(const {outputSlot, inputSlot} of loadedConnections){
+            if(!outputSlot.connect(inputSlot)){
+                throw new Error("Program file contains a connection that is not allowed.");
+            }
+        }
+
+        const cameraPosition = vec(
+            Number.isFinite(camera.x) ? camera.x : 0,
+            Number.isFinite(camera.y) ? camera.y : 0
+        );
+        this.cam.pos = cameraPosition;
+        this.cam.zoom = Number.isFinite(camera.zoom) ? Math.max(0.2, Math.min(4, camera.zoom)) : 1;
+        this.nodes.splice(0, this.nodes.length, ...loadedNodes);
+        this.startNode = loadedNodes.find(node => node instanceof StartNode);
+        this.slotVisuals = new Map();
+        this.nodeVisuals = loadedNodes.map((node, index) =>
+            new NodeVisual(node, vec(visualRecords[index].position.x, visualRecords[index].position.y), this)
+        );
+        visualRecords.forEach((record, nodeIndex) => {
+            if(record.slotAngles === undefined) return;
+            const node = loadedNodes[nodeIndex];
+            record.slotAngles.forEach((angle, slotIndex) => {
+                this.slotVisuals.get(node.slots[slotIndex]).angle = angle;
+            });
+        });
+        this.draggedNodeVisual = null;
+        this.draggedSlotVisual = null;
+        this.connectingSlotVisual = null;
+        this.isPanning = false;
+        this.hoveredSlotVisual = null;
+        this.hoveredSlotCanDragAngle = false;
+        this.hoveredConnectionIsLegal = false;
+        this.hoveredEraseTarget = null;
+        this.eraserMode = false;
+        this.nodePickerOpen = false;
+        cv.style.cursor = "";
+    }
+    chooseProgramFile(){
+        const fileInput = document.createElement("input");
+        fileInput.type = "file";
+        fileInput.accept = ".json,application/json";
+        fileInput.addEventListener("change", async () => {
+            const file = fileInput.files?.[0];
+            if(!file) return;
+            try{
+                this.loadProgram(JSON.parse(await file.text()));
+            } catch(error){
+                window.alert(`Could not load program: ${error.message}`);
+            }
+        }, {once: true});
+        fileInput.click();
+    }
     drawNodePicker(){
-        const {x, y, buttonWidth, buttonHeight, eraserX, executeX, executeWidth, menuY, menuWidth, rowHeight} = NODE_PICKER;
+        const {x, y, buttonWidth, buttonHeight, eraserX, executeX, executeWidth, saveX, loadX, fileButtonWidth, menuY, menuWidth, rowHeight} = NODE_PICKER;
         ctx.save();
         ctx.globalAlpha = 1;
         ctx.globalCompositeOperation = "source-over";
@@ -155,6 +333,20 @@ class Space{
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
         ctx.fillText("Execute", executeX + 34, y + buttonHeight/2);
+        for(const [key, buttonX, label] of [["save", saveX, "Save"], ["load", loadX, "Load"]]){
+            ctx.beginPath();
+            ctx.roundRect(buttonX, y, fileButtonWidth, buttonHeight, 8);
+            ctx.fillStyle = this.hoveredPickerItem === key ? "#293D59" : NODE_BACKGROUND_COL;
+            ctx.fill();
+            ctx.strokeStyle = STROKE_COL;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.fillStyle = NODE_TEXT_COL;
+            ctx.font = "14px Helvetica";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(label, buttonX + fileButtonWidth/2, y + buttonHeight/2);
+        }
         if(!this.nodePickerOpen){
             ctx.restore();
             return;
@@ -182,11 +374,15 @@ class Space{
         ctx.restore();
     }
     getPickerItemAt(position){
-        const {x, y, buttonWidth, buttonHeight, eraserX, executeX, executeWidth, menuY, menuWidth, rowHeight} = NODE_PICKER;
+        const {x, y, buttonWidth, buttonHeight, eraserX, executeX, executeWidth, saveX, loadX, fileButtonWidth, menuY, menuWidth, rowHeight} = NODE_PICKER;
         if(position.x >= eraserX && position.x <= eraserX + buttonWidth &&
            position.y >= y && position.y <= y + buttonHeight) return "eraser";
         if(position.x >= executeX && position.x <= executeX + executeWidth &&
            position.y >= y && position.y <= y + buttonHeight) return "execute";
+        if(position.x >= saveX && position.x <= saveX + fileButtonWidth &&
+           position.y >= y && position.y <= y + buttonHeight) return "save";
+        if(position.x >= loadX && position.x <= loadX + fileButtonWidth &&
+           position.y >= y && position.y <= y + buttonHeight) return "load";
         if(position.x >= x && position.x <= x + buttonWidth &&
            position.y >= y && position.y <= y + buttonHeight) return "button";
         if(!this.nodePickerOpen || position.x < x || position.x > x + menuWidth ||
@@ -309,7 +505,21 @@ class Space{
             (event.clientX - rect.left) * cv.width / rect.width,
             (event.clientY - rect.top) * cv.height / rect.height
         );
-        const {x, y, buttonWidth, buttonHeight, eraserX, executeX, executeWidth, menuY, menuWidth, rowHeight} = NODE_PICKER;
+        const {x, y, buttonWidth, buttonHeight, eraserX, executeX, executeWidth, saveX, loadX, fileButtonWidth, menuY, menuWidth, rowHeight} = NODE_PICKER;
+        if(screenPosition.x >= saveX && screenPosition.x <= saveX + fileButtonWidth &&
+           screenPosition.y >= y && screenPosition.y <= y + buttonHeight){
+            this.nodePickerOpen = false;
+            this.saveProgram();
+            event.preventDefault();
+            return;
+        }
+        if(screenPosition.x >= loadX && screenPosition.x <= loadX + fileButtonWidth &&
+           screenPosition.y >= y && screenPosition.y <= y + buttonHeight){
+            this.nodePickerOpen = false;
+            this.chooseProgramFile();
+            event.preventDefault();
+            return;
+        }
         if(screenPosition.x >= executeX && screenPosition.x <= executeX + executeWidth &&
            screenPosition.y >= y && screenPosition.y <= y + buttonHeight){
             this.nodePickerOpen = false;
