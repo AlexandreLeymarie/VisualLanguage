@@ -175,6 +175,23 @@ class Node{
         if(typeof this.computeData !== "function") return;
         for(const slot of this.getOutputSlots()) slot.value = null;
     }
+    resetCachedDependents(outputSlot){
+        const visitedNodes = new Set([this]);
+        const pendingOutputs = [outputSlot];
+        while(pendingOutputs.length > 0){
+            const currentOutput = pendingOutputs.pop();
+            for(const connectedSlot of currentOutput.connectedSlots){
+                if(connectedSlot.direction !== DIRECTIONS.INPUT || connectedSlot.type === ControlType) continue;
+                const dependentNode = connectedSlot.node;
+                if(visitedNodes.has(dependentNode)) continue;
+                visitedNodes.add(dependentNode);
+                dependentNode.resetCachedValues();
+                for(const dependentOutput of dependentNode.getOutputSlots()){
+                    if(dependentOutput.type !== ControlType) pendingOutputs.push(dependentOutput);
+                }
+            }
+        }
+    }
 }
 
 class NumberNode extends Node{
@@ -397,6 +414,7 @@ class PromptNode extends Node{
         this.valueSlot.value = null;
         const value = window.prompt("Enter a string:");
         this.valueSlot.value = value ?? "";
+        this.resetCachedDependents(this.valueSlot);
         for(const connectedSlot of [...this.controlOutputSlot.connectedSlots]){
             connectedSlot.node.execute();
         }
