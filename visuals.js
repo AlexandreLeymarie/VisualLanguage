@@ -237,8 +237,10 @@ class Space{
         if(nodeVisual !== null && nodeVisual.node !== this.startNode) return {nodeVisual};
 
         let closestTarget = null;
-        let closestDistance = Infinity;
-        const maxDistance = 8 / this.cam.zoom;
+        const pointerScreenPosition = worldToCanvas(position, this.cam);
+        const hitPadding = 8 * this.cam.zoom;
+        const previousLineWidth = ctx.lineWidth;
+        ctx.lineWidth = CONNECTION_LINE_WIDTH * this.cam.zoom + hitPadding * 2;
         for(const candidateVisual of this.nodeVisuals){
             for(const inputSlot of candidateVisual.node.getInputSlots()){
                 const inputVisual = this.slotVisuals.get(inputSlot);
@@ -246,20 +248,17 @@ class Space{
                 for(const outputSlot of inputSlot.connectedSlots){
                     const outputVisual = this.slotVisuals.get(outputSlot);
                     if(outputVisual === undefined) continue;
-                    const start = inputVisual.getConnectionPosition();
-                    const end = outputVisual.getConnectionPosition();
-                    const segment = end.sub(start);
-                    const lengthSquared = segment.dot(segment);
-                    const t = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1, position.sub(start).dot(segment) / lengthSquared));
-                    const nearest = start.add(segment.mul(t));
-                    const distance = position.sub(nearest).length();
-                    if(distance <= maxDistance && distance < closestDistance){
+                    inputVisual.traceConnectionPath(outputVisual, this.cam);
+                    if(ctx.isPointInStroke(pointerScreenPosition.x, pointerScreenPosition.y)){
                         closestTarget = {inputSlot, outputSlot};
-                        closestDistance = distance;
+                        break;
                     }
                 }
+                if(closestTarget !== null) break;
             }
+            if(closestTarget !== null) break;
         }
+        ctx.lineWidth = previousLineWidth;
         return closestTarget;
     }
     eraseAt(position){
@@ -802,27 +801,10 @@ class SlotVisual{
     }
     drawConnections(cam){
         if(this.slot.direction !== DIRECTIONS.INPUT) return;
-        const startPosition = this.getConnectionPosition();
-        const start = worldToCanvas(startPosition, cam);
         for(let connectedSlot of this.slot.connectedSlots){
             const connectedVisual = this.space.slotVisuals.get(connectedSlot);
             if(connectedVisual === undefined) continue;
-            const endPosition = connectedVisual.getConnectionPosition();
-            const end = worldToCanvas(endPosition, cam);
-            const handleLength = endPosition.sub(startPosition).length() * 0.45;
-            const startFacing = this.getFacingAngle();
-            const endFacing = connectedVisual.getFacingAngle();
-            const control1 = worldToCanvas(
-                startPosition.add(vec(Math.cos(startFacing), Math.sin(startFacing)).mul(handleLength)),
-                cam
-            );
-            const control2 = worldToCanvas(
-                endPosition.add(vec(Math.cos(endFacing), Math.sin(endFacing)).mul(handleLength)),
-                cam
-            );
-            ctx.beginPath();
-            ctx.moveTo(start.x, start.y);
-            ctx.bezierCurveTo(control1.x, control1.y, control2.x, control2.y, end.x, end.y);
+            this.traceConnectionPath(connectedVisual, cam);
             const eraseTarget = this.space.hoveredEraseTarget;
             const isEraseTarget = this.space.eraserMode && eraseTarget?.inputSlot === this.slot &&
                 eraseTarget.outputSlot === connectedSlot;
@@ -830,6 +812,26 @@ class SlotVisual{
             ctx.lineWidth = isEraseTarget ? cam.zoom*4 : cam.zoom*CONNECTION_LINE_WIDTH;
             ctx.stroke();
         }
+    }
+    traceConnectionPath(connectedVisual, cam){
+        const startPosition = this.getConnectionPosition();
+        const endPosition = connectedVisual.getConnectionPosition();
+        const start = worldToCanvas(startPosition, cam);
+        const end = worldToCanvas(endPosition, cam);
+        const handleLength = endPosition.sub(startPosition).length() * 0.45;
+        const startFacing = this.getFacingAngle();
+        const endFacing = connectedVisual.getFacingAngle();
+        const control1 = worldToCanvas(
+            startPosition.add(vec(Math.cos(startFacing), Math.sin(startFacing)).mul(handleLength)),
+            cam
+        );
+        const control2 = worldToCanvas(
+            endPosition.add(vec(Math.cos(endFacing), Math.sin(endFacing)).mul(handleLength)),
+            cam
+        );
+        ctx.beginPath();
+        ctx.moveTo(start.x, start.y);
+        ctx.bezierCurveTo(control1.x, control1.y, control2.x, control2.y, end.x, end.y);
     }
     traceShape(cam){
         const radius = cam.zoom * this.radius;
