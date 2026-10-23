@@ -1,5 +1,6 @@
 const BACKGROUND_COL = "#0B1020";
 const NODE_BACKGROUND_COL = "#17243A";
+const CONTROL_NODE_BACKGROUND_COL = "#302D33";
 const STROKE_COL = "#526783";
 const START_NODE_COL = "#E8B85A";
 const SLOT_TEXT_COL = "#A9B9D0";
@@ -895,12 +896,13 @@ class NodeVisual{
         let centerSp = worldToCanvas(this.pos, cam);
         ctx.beginPath();
         ctx.roundRect(cornerSp.x, cornerSp.y, this.size.x*cam.zoom, this.size.y*cam.zoom, cam.zoom*10);
-        ctx.fillStyle = NODE_BACKGROUND_COL;
+        const isControlNode = this.node.slots.some(slot => slot.type === ControlType);
+        ctx.fillStyle = isControlNode ? CONTROL_NODE_BACKGROUND_COL : NODE_BACKGROUND_COL;
         ctx.fill();
         const isEraseTarget = this.space.eraserMode &&
             this.space.hoveredEraseTarget?.nodeVisual === this;
         ctx.strokeStyle = isEraseTarget ? "#EF4444" :
-            this.node === this.space.startNode ? START_NODE_COL : STROKE_COL;
+            isControlNode ? START_NODE_COL : STROKE_COL;
         ctx.lineWidth = isEraseTarget ? cam.zoom*3 : cam.zoom*2;
         ctx.stroke();
         ctx.fillStyle = NODE_TEXT_COL;
@@ -1016,13 +1018,29 @@ class SlotVisual{
         for(let connectedSlot of this.slot.connectedSlots){
             const connectedVisual = this.space.slotVisuals.get(connectedSlot);
             if(connectedVisual === undefined) continue;
-            this.traceConnectionPath(connectedVisual, cam);
+            const isControlConnection = this.slot.type === ControlType;
+            const pathStart = isControlConnection ? connectedVisual : this;
+            const pathEnd = isControlConnection ? this : connectedVisual;
+            pathStart.traceConnectionPath(pathEnd, cam);
             const eraseTarget = this.space.hoveredEraseTarget;
             const isEraseTarget = this.space.eraserMode && eraseTarget?.inputSlot === this.slot &&
                 eraseTarget.outputSlot === connectedSlot;
-            ctx.strokeStyle = isEraseTarget ? "#EF4444" : STROKE_COL;
+            ctx.strokeStyle = isEraseTarget ? "#EF4444" :
+                isControlConnection ? START_NODE_COL : STROKE_COL;
             ctx.lineWidth = isEraseTarget ? cam.zoom*4 : cam.zoom*CONNECTION_LINE_WIDTH;
+            if(isControlConnection){
+                const dashLength = 8 * cam.zoom;
+                const gapLength = 6 * cam.zoom;
+                const dashPhase = performance.now() * 0.012 % 14;
+                ctx.setLineDash([dashLength, gapLength]);
+                ctx.lineDashOffset = -dashPhase * cam.zoom;
+            } else {
+                ctx.setLineDash([]);
+                ctx.lineDashOffset = 0;
+            }
             ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.lineDashOffset = 0;
         }
     }
     traceConnectionPath(connectedVisual, cam){
@@ -1082,7 +1100,9 @@ class SlotVisual{
         ctx.rotate(this.getFacingAngle());
         ctx.beginPath();
         this.traceShape(cam);
-        ctx.fillStyle = isAngleDragging || isHoveredForAngle ? "#FFFFFF" : STROKE_COL;
+        ctx.fillStyle = isAngleDragging || isHoveredForAngle
+            ? "#FFFFFF"
+            : this.slot.type === ControlType ? START_NODE_COL : STROKE_COL;
         ctx.fill();
         if(isConnecting || (isHoveredForConnection && !isAngleDragging)){
             const ringLineWidth = cam.zoom * 2;
