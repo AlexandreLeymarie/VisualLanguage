@@ -97,50 +97,27 @@ class Space{
         this.nodes.push(node);
         this.nodeVisuals.push(new NodeVisual(node, this.cam.pos.copy(), this));
     }
-    serializeProgram(){
-        const nodeIndices = new Map(this.nodes.map((node, index) => [node, index]));
+    serializeVisuals(){
         const nodeVisuals = new Map(this.nodeVisuals.map(nodeVisual => [nodeVisual.node, nodeVisual]));
-        const nodes = this.nodes.map(node => {
-            const record = {
-                type: node.constructor.name
-            };
-            if(node instanceof NumberNode || node instanceof StringNode){
-                record.value = node.valueSlot.value;
-            }
-            return record;
-        });
-        const nodeVisualData = this.nodes.map(node => {
+        const nodes = this.nodes.map((node, nodeId) => {
             const nodeVisual = nodeVisuals.get(node);
             return {
+                nodeId,
                 position: {x: nodeVisual.pos.x, y: nodeVisual.pos.y},
                 slotAngles: node.slots.map(slot => this.slotVisuals.get(slot)?.angle ?? 0)
             };
         });
-        const connections = [];
-        for(const node of this.nodes){
-            for(const inputSlot of node.getInputSlots()){
-                for(const outputSlot of inputSlot.connectedSlots){
-                    if(outputSlot.direction !== DIRECTIONS.OUTPUT) continue;
-                    connections.push({
-                        output: {
-                            node: nodeIndices.get(outputSlot.node),
-                            slot: outputSlot.node.slots.indexOf(outputSlot)
-                        },
-                        input: {
-                            node: nodeIndices.get(inputSlot.node),
-                            slot: inputSlot.node.slots.indexOf(inputSlot)
-                        }
-                    });
-                }
-            }
-        }
         return {
-            version: 2,
-            data: {nodes, connections},
-            visual: {
-                camera: {x: this.cam.pos.x, y: this.cam.pos.y, zoom: this.cam.zoom},
-                nodes: nodeVisualData
-            }
+            camera: {x: this.cam.pos.x, y: this.cam.pos.y, zoom: this.cam.zoom},
+            nodes
+        };
+    }
+    serializeProgram(){
+        return {
+            format: "visual-language-program",
+            version: 1,
+            model: serializeModel(this.nodes),
+            visuals: this.serializeVisuals()
         };
     }
     saveProgram(){
@@ -155,95 +132,74 @@ class Space{
         setTimeout(() => URL.revokeObjectURL(url), 0);
     }
     loadProgram(program){
-        let records;
-        let visualRecords;
-        let connections;
-        let camera;
-        if(program?.version === 2 && Array.isArray(program.data?.nodes) &&
-           Array.isArray(program.data?.connections) && Array.isArray(program.visual?.nodes)){
-            records = program.data.nodes;
-            connections = program.data.connections;
-            visualRecords = program.visual.nodes;
-            camera = program.visual.camera || {};
+        let modelData;
+        let visualData;
+        if(program?.format === "visual-language-program" && program.version === 1){
+            modelData = program.model;
+            visualData = program.visuals;
+        } else if(program?.version === 2 && Array.isArray(program.data?.nodes) &&
+                  Array.isArray(program.data?.connections) && Array.isArray(program.visual?.nodes)){
+            modelData = {version: 1, nodes: program.data.nodes, connections: program.data.connections};
+            visualData = {
+                camera: program.visual.camera,
+                nodes: program.visual.nodes.map((record, nodeId) => ({...record, nodeId}))
+            };
         } else if(program?.version === 1 && Array.isArray(program.nodes) &&
                   Array.isArray(program.connections)){
-            // Keep compatibility with program files saved before data and visual state were separated.
-            records = program.nodes;
-            visualRecords = program.nodes;
-            connections = program.connections;
-            camera = program.camera || {};
+            // Keep compatibility with files that stored model and visual fields together.
+            modelData = {version: 1, nodes: program.nodes, connections: program.connections};
+            visualData = {
+                camera: program.camera,
+                nodes: program.nodes.map((record, nodeId) => ({
+                    nodeId,
+                    position: record.position,
+                    slotAngles: record.slotAngles
+                }))
+            };
         } else {
             throw new Error("Unsupported or invalid program file.");
         }
-        if(records.length !== visualRecords.length){
-            throw new Error("Program file has mismatched data and visual node counts.");
+        const model = deserializeModel(modelData);
+        if(!Array.isArray(visualData?.nodes) || visualData.nodes.length !== model.nodes.length){
+            throw new Error("Program file has mismatched model and visual node counts.");
         }
-        const constructors = new Map([...NODE_TYPES, StartNode].map(NodeType => [NodeType.name, NodeType]));
-        const loadedNodes = records.map(record => {
-            const NodeType = constructors.get(record?.type);
-            if(!NodeType){
-                throw new Error("Program file contains an invalid node.");
+        const visualsByNodeId = new Map();
+        for(const record of visualData.nodes){
+            const node = model.nodesById.get(record?.nodeId);
+            if(!node || visualsByNodeId.has(record.nodeId) ||
+               !Number.isFinite(record.position?.x) || !Number.isFinite(record.position?.y)){
+                throw new Error("Program file contains invalid node visuals.");
             }
-            if(NodeType === NumberNode){
-                if(!Number.isFinite(record.value)) throw new Error("Program file contains an invalid number node.");
-                return new NumberNode(record.value);
-            }
-            if(NodeType === StringNode){
-                if(typeof record.value !== "string") throw new Error("Program file contains an invalid string node.");
-                return new StringNode(record.value);
-            }
-            return new NodeType();
-        });
-        records.forEach((record, index) => {
-            const visualRecord = visualRecords[index];
-            if(!Number.isFinite(visualRecord?.position?.x) || !Number.isFinite(visualRecord?.position?.y)){
-                throw new Error("Program file contains an invalid node position.");
-            }
-            if(visualRecord.slotAngles !== undefined &&
-               (!Array.isArray(visualRecord.slotAngles) || visualRecord.slotAngles.length !== loadedNodes[index].slots.length ||
-                visualRecord.slotAngles.some(angle => !Number.isFinite(angle)))){
+            if(record.slotAngles !== undefined &&
+               (!Array.isArray(record.slotAngles) || record.slotAngles.length !== node.slots.length ||
+                record.slotAngles.some(angle => !Number.isFinite(angle)))){
                 throw new Error("Program file contains invalid slot angles.");
             }
-        });
-        if(loadedNodes.filter(node => node instanceof StartNode).length !== 1){
-            throw new Error("A program must contain exactly one start node.");
+            visualsByNodeId.set(record.nodeId, record);
+        }
+        for(const nodeId of model.nodesById.keys()){
+            if(!visualsByNodeId.has(nodeId)) throw new Error("Program file is missing node visuals.");
         }
 
-        const loadedConnections = connections.map(connection => {
-            const outputRef = connection?.output;
-            const inputRef = connection?.input;
-            const outputNode = loadedNodes[outputRef?.node];
-            const inputNode = loadedNodes[inputRef?.node];
-            const outputSlot = outputNode?.slots[outputRef?.slot];
-            const inputSlot = inputNode?.slots[inputRef?.slot];
-            if(!outputSlot || !inputSlot || outputSlot.direction !== DIRECTIONS.OUTPUT ||
-               inputSlot.direction !== DIRECTIONS.INPUT || outputSlot.type !== inputSlot.type){
-                throw new Error("Program file contains an invalid connection.");
-            }
-            return {outputSlot, inputSlot};
-        });
-        loadedConnections.sort((a, b) => Number(b.outputSlot.type === ControlType) - Number(a.outputSlot.type === ControlType));
-        for(const {outputSlot, inputSlot} of loadedConnections){
-            if(!outputSlot.connect(inputSlot)){
-                throw new Error("Program file contains a connection that is not allowed.");
-            }
-        }
-
-        const cameraPosition = vec(
+        const camera = visualData.camera || {};
+        this.cam.pos = vec(
             Number.isFinite(camera.x) ? camera.x : 0,
             Number.isFinite(camera.y) ? camera.y : 0
         );
-        this.cam.pos = cameraPosition;
         this.cam.zoom = Number.isFinite(camera.zoom) ? Math.max(0.2, Math.min(4, camera.zoom)) : 1;
+        const loadedNodes = model.nodes;
         this.nodes.splice(0, this.nodes.length, ...loadedNodes);
         this.startNode = loadedNodes.find(node => node instanceof StartNode);
         this.slotVisuals = new Map();
-        this.nodeVisuals = loadedNodes.map((node, index) =>
-            new NodeVisual(node, vec(visualRecords[index].position.x, visualRecords[index].position.y), this)
-        );
-        visualRecords.forEach((record, nodeIndex) => {
+        this.nodeVisuals = loadedNodes.map(node => {
+            const nodeId = model.nodeIdsByNode.get(node);
+            const record = visualsByNodeId.get(nodeId);
+            return new NodeVisual(node, vec(record.position.x, record.position.y), this);
+        });
+        loadedNodes.forEach(node => {
+            const nodeId = model.nodeIdsByNode.get(node);
+            const record = visualsByNodeId.get(nodeId);
             if(record.slotAngles === undefined) return;
-            const node = loadedNodes[nodeIndex];
             record.slotAngles.forEach((angle, slotIndex) => {
                 this.slotVisuals.get(node.slots[slotIndex]).angle = angle;
             });

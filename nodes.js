@@ -514,3 +514,87 @@ const NODE_TYPES = [
     SplitNode
 ];
 
+function serializeModel(nodes){
+    const nodeIds = new Map(nodes.map((node, id) => [node, id]));
+    const serializedNodes = nodes.map((node, id) => {
+        const record = {id, type: node.constructor.name};
+        if(node instanceof NumberNode || node instanceof StringNode){
+            record.value = node.valueSlot.value;
+        }
+        return record;
+    });
+    const connections = [];
+    for(const node of nodes){
+        for(const inputSlot of node.getInputSlots()){
+            for(const outputSlot of inputSlot.connectedSlots){
+                if(outputSlot.direction !== DIRECTIONS.OUTPUT) continue;
+                connections.push({
+                    output: {
+                        nodeId: nodeIds.get(outputSlot.node),
+                        slot: outputSlot.node.slots.indexOf(outputSlot)
+                    },
+                    input: {
+                        nodeId: nodeIds.get(inputSlot.node),
+                        slot: inputSlot.node.slots.indexOf(inputSlot)
+                    }
+                });
+            }
+        }
+    }
+    return {version: 1, nodes: serializedNodes, connections};
+}
+
+function deserializeModel(modelData){
+    if(modelData?.version !== 1 || !Array.isArray(modelData.nodes) ||
+       !Array.isArray(modelData.connections)){
+        throw new Error("Program file contains invalid model data.");
+    }
+    const constructors = new Map([...NODE_TYPES, StartNode].map(NodeType => [NodeType.name, NodeType]));
+    const nodesById = new Map();
+    const nodeIdsByNode = new Map();
+    const nodes = modelData.nodes.map((record, index) => {
+        const id = record?.id ?? index;
+        const NodeType = constructors.get(record?.type);
+        if(!Number.isInteger(id) || nodesById.has(id) || !NodeType){
+            throw new Error("Program file contains an invalid model node.");
+        }
+        let node;
+        if(NodeType === NumberNode){
+            if(!Number.isFinite(record.value)) throw new Error("Program file contains an invalid number node.");
+            node = new NumberNode(record.value);
+        } else if(NodeType === StringNode){
+            if(typeof record.value !== "string") throw new Error("Program file contains an invalid string node.");
+            node = new StringNode(record.value);
+        } else {
+            node = new NodeType();
+        }
+        nodesById.set(id, node);
+        nodeIdsByNode.set(node, id);
+        return node;
+    });
+    if(nodes.filter(node => node instanceof StartNode).length !== 1){
+        throw new Error("A program must contain exactly one start node.");
+    }
+
+    const connections = modelData.connections.map(connection => {
+        const outputRef = connection?.output;
+        const inputRef = connection?.input;
+        const outputNode = nodesById.get(outputRef?.nodeId ?? outputRef?.node);
+        const inputNode = nodesById.get(inputRef?.nodeId ?? inputRef?.node);
+        const outputSlot = outputNode?.slots[outputRef?.slot];
+        const inputSlot = inputNode?.slots[inputRef?.slot];
+        if(!outputSlot || !inputSlot || outputSlot.direction !== DIRECTIONS.OUTPUT ||
+           inputSlot.direction !== DIRECTIONS.INPUT || outputSlot.type !== inputSlot.type){
+            throw new Error("Program file contains an invalid connection.");
+        }
+        return {outputSlot, inputSlot};
+    });
+    connections.sort((a, b) => Number(b.outputSlot.type === ControlType) - Number(a.outputSlot.type === ControlType));
+    for(const {outputSlot, inputSlot} of connections){
+        if(!outputSlot.connect(inputSlot)){
+            throw new Error("Program file contains a connection that is not allowed.");
+        }
+    }
+    return {nodes, nodesById, nodeIdsByNode};
+}
+
