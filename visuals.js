@@ -861,6 +861,48 @@ class Space{
         this.drawNodePicker();
         this.drawMinimap();
         this.drawConnectionTooltip();
+        this.drawSlotValueTooltip();
+    }
+    drawSlotValueTooltip(){
+        const slotVisual = this.hoveredSlotVisual;
+        if(slotVisual === null || slotVisual.slot.type === ControlType || this.eraserMode ||
+           this.draggedSlotVisual !== null || this.connectingSlotVisual !== null) return;
+
+        const slot = slotVisual.slot;
+        let cachedValue = slot.value;
+        if(slot.direction === DIRECTIONS.INPUT){
+            const connectedOutput = slot.connectedSlots.find(connectedSlot =>
+                connectedSlot.direction === DIRECTIONS.OUTPUT
+            );
+            cachedValue = connectedOutput?.value ?? null;
+        }
+        const valueText = cachedValue === null
+            ? "not computed"
+            : typeof cachedValue === "string" ? JSON.stringify(cachedValue) : String(cachedValue);
+        const text = `Cached value: ${valueText}`;
+        ctx.save();
+        ctx.font = "13px Helvetica";
+        const paddingX = 9;
+        const paddingY = 6;
+        const width = ctx.measureText(text).width + paddingX * 2;
+        const height = 26;
+        const pointer = this.pointerWorldPosition === null
+            ? worldToCanvas(slotVisual.getPosition(), this.cam)
+            : worldToCanvas(this.pointerWorldPosition, this.cam);
+        const x = Math.max(4, Math.min(cv.width - width - 4, pointer.x + 14));
+        const y = Math.max(4, Math.min(cv.height - height - 4, pointer.y + 14));
+        ctx.beginPath();
+        ctx.roundRect(x, y, width, height, 5);
+        ctx.fillStyle = NODE_BACKGROUND_COL;
+        ctx.fill();
+        ctx.strokeStyle = STROKE_COL;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = NODE_TEXT_COL;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(text, x + paddingX, y + height/2);
+        ctx.restore();
     }
 }
 const cam = {}
