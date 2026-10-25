@@ -434,6 +434,7 @@ class PrintNode extends Node{
         let value = this.valueSlot.getValue();
         if(value === null) return;
         console.log(value);
+        window.alert(value);
         for(let connectedSlot of [...this.controlOutputSlot.connectedSlots]){
             connectedSlot.node.execute();
         }
