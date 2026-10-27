@@ -544,6 +544,37 @@ class ChooseNode extends Node{
     }
 }
 
+class ForceComputeNode extends Node{
+    static displayName = "Force compute";
+    constructor(){
+        super();
+        this.name = "force compute";
+        const valueType = new TypeVariable("T");
+        this.controlInputSlot = new Slot(this, ControlType, DIRECTIONS.INPUT);
+        this.valueInputSlot = new Slot(this, valueType, DIRECTIONS.INPUT);
+        this.valueOutputSlot = new Slot(this, valueType, DIRECTIONS.OUTPUT);
+        this.controlOutputSlot = new Slot(this, ControlType, DIRECTIONS.OUTPUT);
+        this.slots = [
+            this.controlInputSlot,
+            this.valueInputSlot,
+            this.valueOutputSlot,
+            this.controlOutputSlot
+        ];
+    }
+    computeData(){
+        const value = this.valueInputSlot.getValue();
+        if(value === null) return;
+        this.valueOutputSlot.value = value;
+    }
+    execute(){
+        this.valueOutputSlot.value = null;
+        this.computeData();
+        for(const connectedSlot of [...this.controlOutputSlot.connectedSlots]){
+            connectedSlot.node.execute();
+        }
+    }
+}
+
 class StartNode extends Node{
     constructor(){
         super();
@@ -590,7 +621,8 @@ const NODE_TYPES = [
     PromptNode,
     PrintNode,
     SplitNode,
-    ChooseNode
+    ChooseNode,
+    ForceComputeNode
 ];
 
 function serializeModel(nodes){
