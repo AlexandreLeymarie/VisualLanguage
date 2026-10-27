@@ -6,6 +6,39 @@ class ControlType{}
 
 const DIRECTIONS = {OUTPUT: "OUTPUT", INPUT: "INPUT"};
 
+class TypeVariable{
+    constructor(name = "T"){
+        this.name = name;
+        this.slots = new Set();
+    }
+}
+
+function resolveTypeVariable(typeVariable, ignoredInputSlot = null){
+    const visitedVariables = new Set();
+    const pendingVariables = [typeVariable];
+    let resolvedType = null;
+    while(pendingVariables.length > 0){
+        const variable = pendingVariables.pop();
+        if(visitedVariables.has(variable)) continue;
+        visitedVariables.add(variable);
+        for(const slot of variable.slots){
+            if(slot === ignoredInputSlot) continue;
+            for(const connectedSlot of slot.connectedSlots){
+                if(connectedSlot === ignoredInputSlot) continue;
+                if(connectedSlot.type === ControlType) return {type: null, conflict: true};
+                if(connectedSlot.type instanceof TypeVariable){
+                    pendingVariables.push(connectedSlot.type);
+                } else if(resolvedType !== null && resolvedType !== connectedSlot.type){
+                    return {type: null, conflict: true};
+                } else {
+                    resolvedType = connectedSlot.type;
+                }
+            }
+        }
+    }
+    return {type: resolvedType, conflict: false};
+}
+
 function isValidNumberString(value){
     return value.trim() !== "" && Number.isFinite(Number(value));
 }
@@ -92,6 +125,7 @@ class Slot{
         this.doc = doc;
         this.direction = direction;
         this.value = null;
+        if(type instanceof TypeVariable) type.slots.add(this);
         
         this.connectedSlots = [];
     }
@@ -124,9 +158,17 @@ class Slot{
             const direction = this.direction === DIRECTIONS.INPUT ? "input" : "output";
             return `An ${direction} slot cannot connect to another ${direction} slot.`;
         }
-        if(slot.type !== this.type){
-            const sourceType = this.type.name.replace(/Type$/, "").toLowerCase();
-            const targetType = slot.type.name.replace(/Type$/, "").toLowerCase();
+        const inputSlot = this.direction === DIRECTIONS.INPUT ? this : slot;
+        if((this.type instanceof TypeVariable && slot.type === ControlType) ||
+           (slot.type instanceof TypeVariable && this.type === ControlType)){
+            return "A type variable can only connect to data slots, not control slots.";
+        }
+        const thisType = this.getResolvedType(inputSlot.type === ControlType ? null : inputSlot);
+        const otherType = slot.getResolvedType(inputSlot.type === ControlType ? null : inputSlot);
+        if(this.getTypeResolutionConflict(inputSlot) || slot.getTypeResolutionConflict(inputSlot) ||
+           (thisType !== null && otherType !== null && thisType !== otherType)){
+            const sourceType = (thisType || this.type).name.replace(/Type$/, "").toLowerCase();
+            const targetType = (otherType || slot.type).name.replace(/Type$/, "").toLowerCase();
             return `Slot types must match; this connection pairs a ${sourceType} slot with a ${targetType} slot.`;
         }
         if(this.direction === DIRECTIONS.INPUT){
@@ -137,6 +179,20 @@ class Slot{
             if(promptFlowError !== null) return promptFlowError;
         }
         return null;
+    }
+    getResolvedType(ignoredInputSlot = null){
+        if(!(this.type instanceof TypeVariable)) return this.type;
+        return resolveTypeVariable(this.type, ignoredInputSlot).type;
+    }
+    getTypeResolutionConflict(ignoredInputSlot = null){
+        return this.type instanceof TypeVariable &&
+            resolveTypeVariable(this.type, ignoredInputSlot).conflict;
+    }
+    getTypeName(){
+        const resolvedType = this.getResolvedType();
+        if(resolvedType === null && this.type instanceof TypeVariable) return this.type.name;
+        const type = resolvedType || this.type;
+        return type.name.replace(/Type$/, "").toLowerCase();
     }
     getValue(){
         if(this.direction == DIRECTIONS.INPUT){
@@ -466,6 +522,28 @@ class SplitNode extends Node{
     }
 }
 
+class ChooseNode extends Node{
+    static displayName = "Choose";
+    constructor(){
+        super();
+        this.name = "choose";
+        const choiceType = new TypeVariable("T");
+        this.conditionSlot = new Slot(this, BoolType, DIRECTIONS.INPUT, "condition");
+        this.trueSlot = new Slot(this, choiceType, DIRECTIONS.INPUT, "true");
+        this.falseSlot = new Slot(this, choiceType, DIRECTIONS.INPUT, "false");
+        this.outputSlot = new Slot(this, choiceType, DIRECTIONS.OUTPUT);
+        this.slots = [this.conditionSlot, this.trueSlot, this.falseSlot, this.outputSlot];
+    }
+    computeData(){
+        const condition = this.conditionSlot.getValue();
+        if(condition === null) return;
+        const selectedSlot = condition ? this.trueSlot : this.falseSlot;
+        const value = selectedSlot.getValue();
+        if(value === null) return;
+        this.outputSlot.value = value;
+    }
+}
+
 class StartNode extends Node{
     constructor(){
         super();
@@ -511,7 +589,8 @@ const NODE_TYPES = [
     FloorNode,
     PromptNode,
     PrintNode,
-    SplitNode
+    SplitNode,
+    ChooseNode
 ];
 
 function serializeModel(nodes){
@@ -584,7 +663,7 @@ function deserializeModel(modelData){
         const outputSlot = outputNode?.slots[outputRef?.slot];
         const inputSlot = inputNode?.slots[inputRef?.slot];
         if(!outputSlot || !inputSlot || outputSlot.direction !== DIRECTIONS.OUTPUT ||
-           inputSlot.direction !== DIRECTIONS.INPUT || outputSlot.type !== inputSlot.type){
+           inputSlot.direction !== DIRECTIONS.INPUT){
             throw new Error("Program file contains an invalid connection.");
         }
         return {outputSlot, inputSlot};

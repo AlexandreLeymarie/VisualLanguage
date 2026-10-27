@@ -907,7 +907,24 @@ class NodeVisual{
         ctx.font = (cam.zoom*16)+"px Helvetica";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle"
-        ctx.fillText(this.node.name, centerSp.x, centerSp.y, (this.size.x-4)*cam.zoom);
+        const maxLabelWidth = (this.size.x - 8) * cam.zoom;
+        let nodeLabel = this.node.name;
+        if(this.node instanceof StringNode){
+            const escapedCharacters = Array.from(this.node.valueSlot.value, character =>
+                JSON.stringify(character).slice(1, -1)
+            );
+            nodeLabel = `"${escapedCharacters.join("")}"`;
+            if(ctx.measureText(nodeLabel).width > maxLabelWidth){
+                let shortenedContent = "";
+                for(const escapedCharacter of escapedCharacters){
+                    const candidate = `"${shortenedContent}${escapedCharacter}..."`;
+                    if(ctx.measureText(candidate).width > maxLabelWidth) break;
+                    shortenedContent += escapedCharacter;
+                }
+                nodeLabel = `"${shortenedContent}..."`;
+            }
+        }
+        ctx.fillText(nodeLabel, centerSp.x, centerSp.y, maxLabelWidth);
         for(let slotVisual of this.sloteVisuals){
             slotVisual.draw(cam);
         }
@@ -1084,6 +1101,36 @@ class SlotVisual{
         }
         ctx.closePath();
     }
+    drawTypeLabel(cam, labelX, labelY, alignRight){
+        const fontSize = 10 * cam.zoom;
+        const typeVariable = this.slot.type instanceof TypeVariable ? this.slot.type : null;
+        const resolvedType = this.slot.getResolvedType();
+        const text = typeVariable === null
+            ? this.slot.getTypeName()
+            : typeVariable.name;
+        const suffix = typeVariable !== null && resolvedType !== null
+            ? ` (${resolvedType.name.replace(/Type$/, "").toLowerCase()})`
+            : "";
+        ctx.font = `${fontSize}px Helvetica`;
+        ctx.textBaseline = "middle";
+        if(typeVariable === null){
+            ctx.textAlign = alignRight ? "right" : "left";
+            ctx.fillStyle = "#7F9BB9";
+            ctx.fillText(text, labelX, labelY);
+            return;
+        }
+
+        const textWidth = ctx.measureText(text).width;
+        const suffixWidth = ctx.measureText(suffix).width;
+        const startX = alignRight ? labelX - textWidth - suffixWidth : labelX;
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#B8E6C1";
+        ctx.fillText(text, startX, labelY);
+        if(suffix !== ""){
+            ctx.fillStyle = "#7F9BB9";
+            ctx.fillText(suffix, startX + textWidth, labelY);
+        }
+    }
     draw(cam){
         let pos = this.getPosition();
         let shift = pos.sub(this.nodeVisual.pos);
@@ -1117,20 +1164,15 @@ class SlotVisual{
         let textSideSign = shift.x < 0 ? -1 : 1;
         const connectionSp = worldToCanvas(this.getConnectionPosition(), cam);
         const labelX = sp.x + (this.radius + 4) * textSideSign * cam.zoom;
-        const typeName = this.slot.type.name.replace(/Type$/, "");
         ctx.textAlign = shift.x < 0 ? "right" : "left";
         ctx.textBaseline = "middle";
         if(this.slot.name !== null && this.slot.name !== ""){
             ctx.fillStyle = NODE_TEXT_COL;
             ctx.font = `bold ${12 * cam.zoom}px Helvetica`;
             ctx.fillText(this.slot.name, labelX, connectionSp.y - 7 * cam.zoom);
-            ctx.fillStyle = "#7F9BB9";
-            ctx.font = `${10 * cam.zoom}px Helvetica`;
-            ctx.fillText(typeName, labelX, connectionSp.y + 7 * cam.zoom);
+            this.drawTypeLabel(cam, labelX, connectionSp.y + 7 * cam.zoom, shift.x < 0);
         } else {
-            ctx.fillStyle = "#7F9BB9";
-            ctx.font = `${10 * cam.zoom}px Helvetica`;
-            ctx.fillText(typeName, labelX, connectionSp.y);
+            this.drawTypeLabel(cam, labelX, connectionSp.y, shift.x < 0);
         }
     }
 }
