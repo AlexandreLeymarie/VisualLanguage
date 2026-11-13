@@ -3,6 +3,7 @@ const NODE_BACKGROUND_COL = "#17243A";
 const CONTROL_NODE_BACKGROUND_COL = "#302D33";
 const STROKE_COL = "#526783";
 const START_NODE_COL = "#E8B85A";
+const FUNCTION_COL = "#E889B8";
 const SLOT_TEXT_COL = "#A9B9D0";
 const NODE_TEXT_COL = "#F1F5F9";
 const SLOT_DRAG_PADDING = 3;
@@ -26,7 +27,7 @@ resizeCanvas();
 
 let worldToCanvas=(p,cam)=>p.sub(cam.pos).mul(cam.zoom).add(vec(cv.width/2,cv.height/2))
 let canvasToWorld=(p,cam)=>p.sub(vec(cv.width/2,cv.height/2)).mul(1/cam.zoom).add(cam.pos)
-const NODE_PICKER = {x: 16, y: 16, buttonWidth: 48, buttonHeight: 48, eraserX: 72, executeX: 128, executeWidth: 120, saveX: 256, loadX: 328, fileButtonWidth: 64, menuY: 76, menuWidth: 190, rowHeight: 32};
+const NODE_PICKER = {x: 16, y: 16, buttonWidth: 48, buttonHeight: 48, eraserX: 72, executeX: 128, executeWidth: 120, saveX: 256, loadX: 328, fileButtonWidth: 64, functionX: 400, functionWidth: 150, confirmX: 400, confirmWidth: 104, cancelX: 512, cancelWidth: 76, menuY: 76, menuWidth: 190, rowHeight: 32};
 
 
 class Space{
@@ -43,6 +44,7 @@ class Space{
             this.nodeVisuals.push(new NodeVisual(node, position, this));
         }
         this.draggedNodeVisual = null;
+        this.draggedFunctionDefinition = null;
         this.draggedSlotVisual = null;
         this.connectingSlotVisual = null;
         this.isPanning = false;
@@ -56,10 +58,11 @@ class Space{
         this.dragOffset = vec();
         this.nodePickerOpen = false;
         this.hoveredPickerItem = null;
-        this.nodeTypes = NODE_TYPES.map(NodeType => ({
-            NodeType,
-            name: NodeType.displayName || new NodeType().name
-        }));
+        this.functionSelectionMode = false;
+        this.selectedFunctionSlots = new Set();
+        this.functionDefinitionVisuals = [];
+        this.refreshNodeTypes();
+        this.rebuildFunctionDefinitionVisuals();
         cv.addEventListener("pointerdown", this.onPointerDown.bind(this));
         cv.addEventListener("pointermove", this.onPointerMove.bind(this));
         cv.addEventListener("pointerup", this.onPointerUp.bind(this));
@@ -77,7 +80,9 @@ class Space{
     }
     addNode(type){
         let node;
-        if(type.NodeType === NumberNode){
+        if(type.functionId){
+            node = new UserFunctionNode(type.functionId);
+        } else if(type.NodeType === NumberNode){
             const rawValue = window.prompt("Enter a number:");
             if(rawValue === null || rawValue.trim() === "") return;
             const value = Number(rawValue);
@@ -97,7 +102,193 @@ class Space{
         this.nodes.push(node);
         this.nodeVisuals.push(new NodeVisual(node, this.cam.pos.copy(), this));
     }
+    refreshNodeTypes(){
+        this.nodeTypes = NODE_TYPES.map(NodeType => ({
+            NodeType,
+            name: NodeType.displayName || new NodeType().name
+        }));
+        for(const definition of USER_FUNCTION_DEFINITIONS.values()){
+            this.nodeTypes.push({functionId: definition.id, name: definition.name});
+        }
+    }
+    rebuildFunctionDefinitionVisuals(){
+        this.functionDefinitionVisuals = [];
+        for(const definition of USER_FUNCTION_DEFINITIONS.values()){
+            const records = new Map((definition.visuals?.nodes || []).map(record => [record.nodeId, record]));
+            const visuals = definition.nodes.map((node, nodeId) => {
+                const record = records.get(nodeId);
+                const position = record?.position || {x: definition.bounds.left, y: definition.bounds.top};
+                const visual = new NodeVisual(node, vec(position.x, position.y), this);
+                visual.isFunctionDefinitionVisual = true;
+                for(const slotVisual of visual.sloteVisuals) this.slotVisuals.set(slotVisual.slot, slotVisual);
+                if(Array.isArray(record?.slotAngles)){
+                    record.slotAngles.forEach((angle, index) => {
+                        if(visual.sloteVisuals[index]) visual.sloteVisuals[index].angle = angle;
+                    });
+                }
+                return visual;
+            });
+            this.functionDefinitionVisuals.push({definition, visuals});
+            this.updateFunctionDefinitionBounds(this.functionDefinitionVisuals[this.functionDefinitionVisuals.length - 1]);
+        }
+    }
+    updateFunctionDefinitionBounds(group){
+        if(group.visuals.length === 0) return;
+        const padding = 24;
+        const titleHeight = 34;
+        group.definition.bounds = {
+            left: Math.min(...group.visuals.map(visual => visual.pos.x - visual.size.x / 2)) - padding,
+            right: Math.max(...group.visuals.map(visual => visual.pos.x + visual.size.x / 2)) + padding,
+            top: Math.min(...group.visuals.map(visual => visual.pos.y - visual.size.y / 2)) - padding - titleHeight,
+            bottom: Math.max(...group.visuals.map(visual => visual.pos.y + visual.size.y / 2)) + padding
+        };
+    }
+    syncFunctionDefinitionVisuals(){
+        for(const group of this.functionDefinitionVisuals){
+            this.updateFunctionDefinitionBounds(group);
+            const visualByNode = new Map(group.visuals.map(visual => [visual.node, visual]));
+            group.definition.visuals = {
+                nodes: this.getDefinitionVisualRecords(group.definition.nodes, visualByNode)
+            };
+        }
+    }
+    getAllNodeVisuals(){
+        return [
+            ...this.nodeVisuals,
+            ...this.functionDefinitionVisuals.flatMap(group => group.visuals)
+        ];
+    }
+    getFunctionDefinitionAt(position){
+        for(let i = this.functionDefinitionVisuals.length - 1; i >= 0; i--){
+            const group = this.functionDefinitionVisuals[i];
+            const {left, right, top, bottom} = group.definition.bounds;
+            if(position.x >= left && position.x <= right && position.y >= top && position.y <= bottom){
+                return group;
+            }
+        }
+        return null;
+    }
+    getDefinitionVisualRecords(nodes, visualByNode){
+        return nodes.map((node, nodeId) => {
+            const visual = visualByNode.get(node);
+            return {
+                nodeId,
+                position: {x: visual.pos.x, y: visual.pos.y},
+                slotAngles: node.slots.map(slot => this.slotVisuals.get(slot)?.angle ?? 0)
+            };
+        });
+    }
+    getSlotNodePort(slotNode){
+        if(slotNode instanceof DataSlotNode){
+            const inputConnected = slotNode.valueInputSlot.connectedSlots.length > 0;
+            const outputConnected = slotNode.valueOutputSlot.connectedSlots.length > 0;
+            if(inputConnected === outputConnected){
+                return {error: `Slot node “${slotNode.getPortName()}” needs exactly one of its data slots connected.`};
+            }
+            const direction = inputConnected ? "output" : "input";
+            const connectedSlot = inputConnected ? slotNode.valueInputSlot.connectedSlots[0] : slotNode.valueOutputSlot.connectedSlots[0];
+            const type = connectedSlot.getResolvedType() || connectedSlot.type;
+            return {direction, type, name: slotNode.getPortName(), boundarySlot: slotNode,
+                connectedSlot, internalSlot: inputConnected ? slotNode.valueInputSlot : slotNode.valueOutputSlot};
+        }
+        if(slotNode instanceof ControlSlotNode){
+            const inputConnected = slotNode.controlInputSlot.connectedSlots.length > 0;
+            const outputConnected = slotNode.controlOutputSlot.connectedSlots.length > 0;
+            if(inputConnected === outputConnected){
+                return {error: `Control slot “${slotNode.getPortName()}” needs exactly one of its control slots connected.`};
+            }
+            const direction = inputConnected ? "output" : "input";
+            return {direction, type: ControlType, name: slotNode.getPortName(), boundarySlot: slotNode,
+                connectedSlot: inputConnected ? slotNode.controlInputSlot.connectedSlots[0] : slotNode.controlOutputSlot.connectedSlots[0],
+                internalSlot: inputConnected ? slotNode.controlInputSlot : slotNode.controlOutputSlot};
+        }
+        return {error: "Select only data slot and control slot nodes."};
+    }
+    confirmFunctionSelection(){
+        if(this.selectedFunctionSlots.size === 0){
+            window.alert("Select at least one data slot or control slot node first.");
+            return;
+        }
+        const selectedNodes = [...this.selectedFunctionSlots];
+        const ports = selectedNodes.map(node => this.getSlotNodePort(node));
+        const invalidPort = ports.find(port => port.error);
+        if(invalidPort){
+            window.alert(invalidPort.error);
+            return;
+        }
+        const selectedSet = new Set(selectedNodes);
+        const regionNodes = new Set(selectedNodes);
+        const pendingNodes = ports.map(port => port.connectedSlot.node);
+        while(pendingNodes.length > 0){
+            const node = pendingNodes.pop();
+            if(selectedSet.has(node) || regionNodes.has(node)) continue;
+            if(node instanceof StartNode){
+                window.alert("A function cannot contain the start node. Place a selected slot node between the start and the function body.");
+                return;
+            }
+            regionNodes.add(node);
+            for(const slot of node.slots){
+                for(const connectedSlot of slot.connectedSlots){
+                    if(selectedSet.has(connectedSlot.node)) continue;
+                    pendingNodes.push(connectedSlot.node);
+                }
+            }
+        }
+        const regionVisuals = this.nodeVisuals.filter(visual => regionNodes.has(visual.node));
+        for(const node of selectedNodes){
+            const port = ports[selectedNodes.indexOf(node)];
+            if(!regionNodes.has(port.connectedSlot.node)){
+                window.alert(`The connected side of “${port.name}” must lead into the selected function area.`);
+                return;
+            }
+        }
+        for(const node of regionNodes){
+            for(const slot of node.slots){
+                for(const connectedSlot of slot.connectedSlots){
+                    if(regionNodes.has(connectedSlot.node)) continue;
+                    window.alert("Every connection crossing the function border must pass through one of the selected slot nodes. Move the function boundary or select the missing slot node.");
+                    return;
+                }
+            }
+        }
+        const name = window.prompt("Name this function:", "new function");
+        if(name === null || name.trim() === "") return;
+        const id = `function-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const portRecords = ports.map((port, index) => {
+            const slotNode = selectedNodes[index];
+            const portId = `${id}-port-${index}`;
+            slotNode.boundaryPortId = portId;
+            slotNode.boundaryDirection = port.direction;
+            let type = port.type;
+            if(type instanceof TypeVariable){
+                type = new TypeVariable(`T${index + 1}`);
+            }
+            return {id: portId, name: port.name || `slot ${index + 1}`, direction: port.direction, type,
+                typeVariableName: type instanceof TypeVariable ? type.name : null};
+        });
+        const bounds = {
+            left: Math.min(...regionVisuals.map(visual => visual.pos.x - visual.size.x/2)) - 24,
+            right: Math.max(...regionVisuals.map(visual => visual.pos.x + visual.size.x/2)) + 24,
+            top: Math.min(...regionVisuals.map(visual => visual.pos.y - visual.size.y/2)) - 24,
+            bottom: Math.max(...regionVisuals.map(visual => visual.pos.y + visual.size.y/2)) + 24
+        };
+        const visualByNode = new Map(regionVisuals.map(visual => [visual.node, visual]));
+        const definition = new FunctionDefinition(id, name.trim(), [...regionNodes], portRecords, bounds, {nodes: []});
+        definition.visuals = {nodes: this.getDefinitionVisualRecords(definition.nodes, visualByNode)};
+        USER_FUNCTION_DEFINITIONS.set(id, definition);
+        this.nodes = this.nodes.filter(node => !regionNodes.has(node));
+        this.nodeVisuals = this.nodeVisuals.filter(visual => !regionNodes.has(visual.node));
+        this.startNode = this.nodes.find(node => node instanceof StartNode) || null;
+        this.slotVisuals = new Map();
+        for(const visual of this.nodeVisuals) for(const slotVisual of visual.sloteVisuals) this.slotVisuals.set(slotVisual.slot, slotVisual);
+        this.nodePickerOpen = false;
+        this.functionSelectionMode = false;
+        this.selectedFunctionSlots.clear();
+        this.refreshNodeTypes();
+        this.rebuildFunctionDefinitionVisuals();
+    }
     serializeVisuals(){
+        this.syncFunctionDefinitionVisuals();
         const nodeVisuals = new Map(this.nodeVisuals.map(nodeVisual => [nodeVisual.node, nodeVisual]));
         const nodes = this.nodes.map((node, nodeId) => {
             const nodeVisual = nodeVisuals.get(node);
@@ -115,9 +306,9 @@ class Space{
     serializeProgram(){
         return {
             format: "visual-language-program",
-            version: 1,
-            model: serializeModel(this.nodes),
-            visuals: this.serializeVisuals()
+            version: 2,
+            model: {...serializeModel(this.nodes), functions: serializeFunctionDefinitions()},
+            visuals: {...this.serializeVisuals(), functions: serializeFunctionDefinitionVisuals()}
         };
     }
     saveProgram(){
@@ -134,11 +325,13 @@ class Space{
     loadProgram(program){
         let modelData;
         let visualData;
-        if(program?.format === "visual-language-program" && program.version === 1){
+        if(program?.format === "visual-language-program" && (program.version === 1 || program.version === 2)){
+            deserializeFunctionDefinitions(program.version >= 2 ? program.model?.functions : [], program.visuals?.functions || []);
             modelData = program.model;
             visualData = program.visuals;
         } else if(program?.version === 2 && Array.isArray(program.data?.nodes) &&
                   Array.isArray(program.data?.connections) && Array.isArray(program.visual?.nodes)){
+            deserializeFunctionDefinitions([]);
             modelData = {version: 1, nodes: program.data.nodes, connections: program.data.connections};
             visualData = {
                 camera: program.visual.camera,
@@ -146,6 +339,7 @@ class Space{
             };
         } else if(program?.version === 1 && Array.isArray(program.nodes) &&
                   Array.isArray(program.connections)){
+            deserializeFunctionDefinitions([]);
             // Keep compatibility with files that stored model and visual fields together.
             modelData = {version: 1, nodes: program.nodes, connections: program.connections};
             visualData = {
@@ -196,6 +390,8 @@ class Space{
             const record = visualsByNodeId.get(nodeId);
             return new NodeVisual(node, vec(record.position.x, record.position.y), this);
         });
+        this.slotVisuals = new Map();
+        this.nodeVisuals.forEach(visual => visual.sloteVisuals.forEach(slotVisual => this.slotVisuals.set(slotVisual.slot, slotVisual)));
         loadedNodes.forEach(node => {
             const nodeId = model.nodeIdsByNode.get(node);
             const record = visualsByNodeId.get(nodeId);
@@ -204,6 +400,7 @@ class Space{
                 this.slotVisuals.get(node.slots[slotIndex]).angle = angle;
             });
         });
+        this.rebuildFunctionDefinitionVisuals();
         this.draggedNodeVisual = null;
         this.draggedSlotVisual = null;
         this.connectingSlotVisual = null;
@@ -214,6 +411,9 @@ class Space{
         this.hoveredEraseTarget = null;
         this.eraserMode = false;
         this.nodePickerOpen = false;
+        this.functionSelectionMode = false;
+        this.selectedFunctionSlots.clear();
+        this.refreshNodeTypes();
         cv.style.cursor = "";
     }
     chooseProgramFile(){
@@ -232,7 +432,8 @@ class Space{
         fileInput.click();
     }
     drawNodePicker(){
-        const {x, y, buttonWidth, buttonHeight, eraserX, executeX, executeWidth, saveX, loadX, fileButtonWidth, menuY, menuWidth, rowHeight} = NODE_PICKER;
+        const {x, y, buttonWidth, buttonHeight, eraserX, executeX, executeWidth, saveX, loadX, fileButtonWidth,
+            functionX, functionWidth, confirmX, confirmWidth, cancelX, cancelWidth, menuY, menuWidth, rowHeight} = NODE_PICKER;
         ctx.save();
         ctx.globalAlpha = 1;
         ctx.globalCompositeOperation = "source-over";
@@ -304,6 +505,40 @@ class Space{
             ctx.textBaseline = "middle";
             ctx.fillText(label, buttonX + fileButtonWidth/2, y + buttonHeight/2);
         }
+        if(this.functionSelectionMode){
+            for(const [key, buttonX, width, label] of [["confirm-function", confirmX, confirmWidth, "Confirm"], ["cancel-function", cancelX, cancelWidth, "Cancel"]]){
+                ctx.beginPath();
+                ctx.roundRect(buttonX, y, width, buttonHeight, 8);
+                ctx.fillStyle = this.hoveredPickerItem === key ? "#493044" : NODE_BACKGROUND_COL;
+                ctx.fill();
+                ctx.strokeStyle = FUNCTION_COL;
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+                ctx.fillStyle = NODE_TEXT_COL;
+                ctx.font = "14px Helvetica";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(label, buttonX + width/2, y + buttonHeight/2);
+            }
+            ctx.fillStyle = FUNCTION_COL;
+            ctx.font = "13px Helvetica";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "top";
+            ctx.fillText(`Select slot nodes (${this.selectedFunctionSlots.size}), then confirm.`, confirmX, y + buttonHeight + 8);
+        } else {
+            ctx.beginPath();
+            ctx.roundRect(functionX, y, functionWidth, buttonHeight, 8);
+            ctx.fillStyle = this.hoveredPickerItem === "create-function" ? "#493044" : NODE_BACKGROUND_COL;
+            ctx.fill();
+            ctx.strokeStyle = FUNCTION_COL;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            ctx.fillStyle = NODE_TEXT_COL;
+            ctx.font = "14px Helvetica";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("Create function", functionX + functionWidth/2, y + buttonHeight/2);
+        }
         if(!this.nodePickerOpen){
             ctx.restore();
             return;
@@ -331,7 +566,8 @@ class Space{
         ctx.restore();
     }
     getPickerItemAt(position){
-        const {x, y, buttonWidth, buttonHeight, eraserX, executeX, executeWidth, saveX, loadX, fileButtonWidth, menuY, menuWidth, rowHeight} = NODE_PICKER;
+        const {x, y, buttonWidth, buttonHeight, eraserX, executeX, executeWidth, saveX, loadX, fileButtonWidth,
+            functionX, functionWidth, confirmX, confirmWidth, cancelX, cancelWidth, menuY, menuWidth, rowHeight} = NODE_PICKER;
         if(position.x >= eraserX && position.x <= eraserX + buttonWidth &&
            position.y >= y && position.y <= y + buttonHeight) return "eraser";
         if(position.x >= executeX && position.x <= executeX + executeWidth &&
@@ -340,6 +576,11 @@ class Space{
            position.y >= y && position.y <= y + buttonHeight) return "save";
         if(position.x >= loadX && position.x <= loadX + fileButtonWidth &&
            position.y >= y && position.y <= y + buttonHeight) return "load";
+        if(this.functionSelectionMode){
+            if(position.x >= confirmX && position.x <= confirmX + confirmWidth && position.y >= y && position.y <= y + buttonHeight) return "confirm-function";
+            if(position.x >= cancelX && position.x <= cancelX + cancelWidth && position.y >= y && position.y <= y + buttonHeight) return "cancel-function";
+        } else if(position.x >= functionX && position.x <= functionX + functionWidth &&
+           position.y >= y && position.y <= y + buttonHeight) return "create-function";
         if(position.x >= x && position.x <= x + buttonWidth &&
            position.y >= y && position.y <= y + buttonHeight) return "button";
         if(!this.nodePickerOpen || position.x < x || position.x > x + menuWidth ||
@@ -349,8 +590,9 @@ class Space{
     getSlotVisualAt(position, extraRadius = 0, sourceSlotVisual = null, filterLegal = true){
         let closest = null;
         let closestDistance = Infinity;
-        for(let i = this.nodeVisuals.length - 1; i >= 0; i--){
-            const nodeVisual = this.nodeVisuals[i];
+        const nodeVisuals = this.getAllNodeVisuals();
+        for(let i = nodeVisuals.length - 1; i >= 0; i--){
+            const nodeVisual = nodeVisuals[i];
             for(let j = nodeVisual.sloteVisuals.length - 1; j >= 0; j--){
                 const slotVisual = nodeVisual.sloteVisuals[j];
                 if(slotVisual === sourceSlotVisual) continue;
@@ -378,8 +620,9 @@ class Space{
         return cornerX * cornerX + cornerY * cornerY <= radius * radius;
     }
     getNodeVisualAt(position){
-        for(let i = this.nodeVisuals.length - 1; i >= 0; i--){
-            if(this.isPointOverNode(position, this.nodeVisuals[i])) return this.nodeVisuals[i];
+        const nodeVisuals = this.getAllNodeVisuals();
+        for(let i = nodeVisuals.length - 1; i >= 0; i--){
+            if(this.isPointOverNode(position, nodeVisuals[i])) return nodeVisuals[i];
         }
         return null;
     }
@@ -387,7 +630,13 @@ class Space{
         return this.getNodeVisualAt(position) !== null;
     }
     getEraseTargetAt(position){
-        const nodeVisual = this.getNodeVisualAt(position);
+        let nodeVisual = null;
+        for(let i = this.nodeVisuals.length - 1; i >= 0; i--){
+            if(this.isPointOverNode(position, this.nodeVisuals[i])){
+                nodeVisual = this.nodeVisuals[i];
+                break;
+            }
+        }
         if(nodeVisual !== null && nodeVisual.node !== this.startNode) return {nodeVisual};
 
         let closestTarget = null;
@@ -441,9 +690,18 @@ class Space{
         );
     }
     isPointerOverMinimap(position){
-        const y = cv.height - MINIMAP.height - MINIMAP.margin;
-        return position.x >= MINIMAP.x && position.x <= MINIMAP.x + MINIMAP.width &&
-            position.y >= y && position.y <= y + MINIMAP.height;
+        const map = this.getMinimapRect();
+        return position.x >= map.x && position.x <= map.x + map.width &&
+            position.y >= map.y && position.y <= map.y + map.height;
+    }
+    getMinimapRect(){
+        return {
+            x: cv.width - MINIMAP.width - MINIMAP.margin,
+            y: cv.height - MINIMAP.height - MINIMAP.margin,
+            width: MINIMAP.width,
+            height: MINIMAP.height,
+            padding: 10
+        };
     }
     onWheel(event){
         event.preventDefault();
@@ -463,6 +721,34 @@ class Space{
             (event.clientY - rect.top) * cv.height / rect.height
         );
         const {x, y, buttonWidth, buttonHeight, eraserX, executeX, executeWidth, saveX, loadX, fileButtonWidth, menuY, menuWidth, rowHeight} = NODE_PICKER;
+        if(this.functionSelectionMode){
+            const pickerItem = this.getPickerItemAt(screenPosition);
+            if(pickerItem === "confirm-function") this.confirmFunctionSelection();
+            else if(pickerItem === "cancel-function"){
+                this.functionSelectionMode = false;
+                this.selectedFunctionSlots.clear();
+            } else {
+                const pointerPosition = this.getWorldPointerPosition(event);
+                const nodeVisual = this.getNodeVisualAt(pointerPosition);
+                if(nodeVisual?.node instanceof DataSlotNode || nodeVisual?.node instanceof ControlSlotNode){
+                    const node = nodeVisual.node;
+                    if(this.selectedFunctionSlots.has(node)) this.selectedFunctionSlots.delete(node);
+                    else this.selectedFunctionSlots.add(node);
+                }
+            }
+            event.preventDefault();
+            return;
+        }
+        const topPickerItem = this.getPickerItemAt(screenPosition);
+        if(topPickerItem === "create-function"){
+            this.functionSelectionMode = true;
+            this.selectedFunctionSlots.clear();
+            this.hoveredSlotVisual = null;
+            this.hoveredSlotCanDragAngle = false;
+            this.nodePickerOpen = false;
+            event.preventDefault();
+            return;
+        }
         if(screenPosition.x >= saveX && screenPosition.x <= saveX + fileButtonWidth &&
            screenPosition.y >= y && screenPosition.y <= y + buttonHeight){
             this.nodePickerOpen = false;
@@ -549,11 +835,10 @@ class Space{
                 return;
             }
         }
-        for(let i = this.nodeVisuals.length - 1; i >= 0; i--){
-            const nodeVisual = this.nodeVisuals[i];
-            const halfSize = nodeVisual.size.mul(.5);
-            if(Math.abs(pointerPosition.x - nodeVisual.pos.x) <= halfSize.x &&
-               Math.abs(pointerPosition.y - nodeVisual.pos.y) <= halfSize.y){
+        const nodeVisuals = this.getAllNodeVisuals();
+        for(let i = nodeVisuals.length - 1; i >= 0; i--){
+            const nodeVisual = nodeVisuals[i];
+            if(this.isPointOverNode(pointerPosition, nodeVisual)){
                 this.draggedNodeVisual = nodeVisual;
                 this.dragOffset = nodeVisual.pos.sub(pointerPosition);
                 cv.setPointerCapture(event.pointerId);
@@ -561,6 +846,15 @@ class Space{
                 event.preventDefault();
                 return;
             }
+        }
+        const functionGroup = this.getFunctionDefinitionAt(pointerPosition);
+        if(functionGroup !== null){
+            this.draggedFunctionDefinition = functionGroup;
+            this.lastFunctionDragPosition = pointerPosition;
+            cv.setPointerCapture(event.pointerId);
+            cv.style.cursor = "grabbing";
+            event.preventDefault();
+            return;
         }
         this.isPanning = true;
         this.lastPanPosition = screenPosition;
@@ -575,7 +869,26 @@ class Space{
             (event.clientY - rect.top) * cv.height / rect.height
         );
         this.hoveredPickerItem = this.getPickerItemAt(screenPosition);
+        if(this.functionSelectionMode){
+            this.hoveredSlotVisual = null;
+            this.hoveredSlotCanDragAngle = false;
+            const nodeVisual = this.getNodeVisualAt(this.getWorldPointerPosition(event));
+            cv.style.cursor = this.hoveredPickerItem !== null ||
+                nodeVisual?.node instanceof DataSlotNode || nodeVisual?.node instanceof ControlSlotNode
+                ? "pointer" : "default";
+            return;
+        }
         this.pointerWorldPosition = this.getWorldPointerPosition(event);
+        if(this.draggedFunctionDefinition !== null){
+            const delta = this.pointerWorldPosition.sub(this.lastFunctionDragPosition);
+            for(const visual of this.draggedFunctionDefinition.visuals){
+                visual.pos = visual.pos.add(delta);
+            }
+            this.lastFunctionDragPosition = this.pointerWorldPosition;
+            this.updateFunctionDefinitionBounds(this.draggedFunctionDefinition);
+            cv.style.cursor = "grabbing";
+            return;
+        }
         if(this.isPanning){
             const screenDelta = screenPosition.sub(this.lastPanPosition);
             this.cam.pos = this.cam.pos.sub(screenDelta.mul(1 / this.cam.zoom));
@@ -632,6 +945,16 @@ class Space{
         if(this.connectingSlotVisual !== null) return;
         if(this.draggedNodeVisual !== null){
             this.draggedNodeVisual.pos = this.getWorldPointerPosition(event).add(this.dragOffset);
+            if(this.draggedNodeVisual.isFunctionDefinitionVisual){
+                const group = this.functionDefinitionVisuals.find(candidate =>
+                    candidate.visuals.includes(this.draggedNodeVisual)
+                );
+                if(group !== undefined) this.updateFunctionDefinitionBounds(group);
+            }
+            return;
+        }
+        if(this.getFunctionDefinitionAt(this.pointerWorldPosition) !== null){
+            cv.style.cursor = "grab";
             return;
         }
         if(this.hoveredPickerItem !== null){
@@ -646,7 +969,7 @@ class Space{
         cv.style.cursor = "grab";
     }
     onPointerUp(event){
-        if(this.draggedNodeVisual === null && this.draggedSlotVisual === null && this.connectingSlotVisual === null && !this.isPanning) return;
+        if(this.draggedNodeVisual === null && this.draggedFunctionDefinition === null && this.draggedSlotVisual === null && this.connectingSlotVisual === null && !this.isPanning) return;
         if(this.connectingSlotVisual !== null){
             this.onPointerMove(event);
             const targetSlotVisual = this.getSlotVisualAt(
@@ -657,6 +980,8 @@ class Space{
             if(targetSlotVisual !== null) this.connectingSlotVisual.slot.connect(targetSlotVisual.slot);
         }
         this.draggedNodeVisual = null;
+        this.draggedFunctionDefinition = null;
+        this.lastFunctionDragPosition = null;
         this.draggedSlotVisual = null;
         this.connectingSlotVisual = null;
         this.isPanning = false;
@@ -666,7 +991,7 @@ class Space{
         this.onPointerMove(event);
     }
     drawMinimap(){
-        const map = {x: MINIMAP.x, y: cv.height - MINIMAP.height - MINIMAP.margin, width: MINIMAP.width, height: MINIMAP.height, padding: 10};
+        const map = this.getMinimapRect();
         const viewWidth = cv.width / this.cam.zoom;
         const viewHeight = cv.height / this.cam.zoom;
         let minX = this.cam.pos.x - viewWidth/2;
@@ -679,6 +1004,12 @@ class Space{
             maxX = Math.max(maxX, nodeVisual.pos.x + halfSize.x);
             minY = Math.min(minY, nodeVisual.pos.y - halfSize.y);
             maxY = Math.max(maxY, nodeVisual.pos.y + halfSize.y);
+        }
+        for(const {definition} of this.functionDefinitionVisuals){
+            minX = Math.min(minX, definition.bounds.left);
+            maxX = Math.max(maxX, definition.bounds.right);
+            minY = Math.min(minY, definition.bounds.top);
+            maxY = Math.max(maxY, definition.bounds.bottom);
         }
         const worldWidth = Math.max(1, maxX - minX);
         const worldHeight = Math.max(1, maxY - minY);
@@ -710,11 +1041,25 @@ class Space{
         ctx.beginPath();
         ctx.roundRect(map.x + 1, map.y + 1, map.width - 2, map.height - 2, 7);
         ctx.clip();
-        for(const nodeVisual of this.nodeVisuals){
+        for(const {definition} of this.functionDefinitionVisuals){
+            const topLeft = toMap(vec(definition.bounds.left, definition.bounds.top));
+            const bottomRight = toMap(vec(definition.bounds.right, definition.bounds.bottom));
+            const width = Math.max(2, bottomRight.x - topLeft.x);
+            const height = Math.max(2, bottomRight.y - topLeft.y);
+            ctx.beginPath();
+            ctx.roundRect(topLeft.x, topLeft.y, width, height, Math.min(4, width / 4, height / 4));
+            ctx.fillStyle = "rgba(232, 137, 184, 0.16)";
+            ctx.fill();
+            ctx.strokeStyle = FUNCTION_COL;
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+        for(const nodeVisual of this.getAllNodeVisuals()){
             const center = toMap(nodeVisual.pos);
-            const nodeWidth = Math.max(4, nodeVisual.size.x * scale);
-            const nodeHeight = Math.max(4, nodeVisual.size.y * scale);
-            ctx.fillStyle = nodeVisual.node === this.startNode ? START_NODE_COL : "#8AA2C0";
+            const nodeWidth = Math.max(3, nodeVisual.size.x * scale);
+            const nodeHeight = Math.max(3, nodeVisual.size.y * scale);
+            ctx.fillStyle = nodeVisual.node === this.startNode ? START_NODE_COL :
+                nodeVisual.isFunctionDefinitionVisual ? FUNCTION_COL : "#8AA2C0";
             ctx.fillRect(center.x - nodeWidth/2, center.y - nodeHeight/2, nodeWidth, nodeHeight);
         }
         const viewTopLeft = toMap(vec(this.cam.pos.x - viewWidth/2, this.cam.pos.y - viewHeight/2));
@@ -798,6 +1143,7 @@ class Space{
         ctx.fillStyle = BACKGROUND_COL;
         ctx.fillRect(0, 0, cv.width, cv.height);
         this.drawDotGrid();
+        this.drawFunctionDefinitionFrames();
         for(let slotVisual of this.slotVisuals.values()){
             slotVisual.drawConnections(this.cam);
         }
@@ -814,15 +1160,40 @@ class Space{
         for(let nodeVisual of this.nodeVisuals){
             nodeVisual.draw(this.cam);
         }
+        for(const group of this.functionDefinitionVisuals){
+            for(const nodeVisual of group.visuals) nodeVisual.draw(this.cam);
+        }
         this.drawNodePicker();
         this.drawMinimap();
         this.drawConnectionTooltip();
         this.drawSlotValueTooltip();
     }
+    drawFunctionDefinitionFrames(){
+        for(const {definition} of this.functionDefinitionVisuals){
+            const topLeft = worldToCanvas(vec(definition.bounds.left, definition.bounds.top), this.cam);
+            const bottomRight = worldToCanvas(vec(definition.bounds.right, definition.bounds.bottom), this.cam);
+            const width = bottomRight.x - topLeft.x;
+            const height = bottomRight.y - topLeft.y;
+            ctx.save();
+            ctx.beginPath();
+            ctx.roundRect(topLeft.x, topLeft.y, width, height, 18 * this.cam.zoom);
+            ctx.fillStyle = "rgba(232, 137, 184, 0.09)";
+            ctx.fill();
+            ctx.strokeStyle = FUNCTION_COL;
+            ctx.lineWidth = Math.max(1.5, this.cam.zoom * 2);
+            ctx.stroke();
+            ctx.fillStyle = FUNCTION_COL;
+            ctx.font = `bold ${15 * this.cam.zoom}px Helvetica`;
+            ctx.textAlign = "left";
+            ctx.textBaseline = "top";
+            ctx.fillText(definition.name, topLeft.x + 14 * this.cam.zoom, topLeft.y + 12 * this.cam.zoom);
+            ctx.restore();
+        }
+    }
     drawSlotValueTooltip(){
         const slotVisual = this.hoveredSlotVisual;
         if(slotVisual === null || slotVisual.slot.type === ControlType || this.eraserMode ||
-           this.draggedSlotVisual !== null || this.connectingSlotVisual !== null) return;
+           this.draggedSlotVisual !== null || this.connectingSlotVisual !== null || this.functionSelectionMode) return;
 
         const slot = slotVisual.slot;
         let cachedValue = slot.value;
@@ -895,13 +1266,15 @@ class NodeVisual{
         ctx.beginPath();
         ctx.roundRect(cornerSp.x, cornerSp.y, this.size.x*cam.zoom, this.size.y*cam.zoom, cam.zoom*10);
         const isControlNode = this.node.slots.some(slot => slot.type === ControlType);
-        ctx.fillStyle = isControlNode ? CONTROL_NODE_BACKGROUND_COL : NODE_BACKGROUND_COL;
+        const isSlotNode = this.node instanceof DataSlotNode || this.node instanceof ControlSlotNode;
+        const isSelectedFunctionSlot = this.space.selectedFunctionSlots?.has(this.node);
+        ctx.fillStyle = isSlotNode ? "#48293D" : isControlNode ? CONTROL_NODE_BACKGROUND_COL : NODE_BACKGROUND_COL;
         ctx.fill();
         const isEraseTarget = this.space.eraserMode &&
             this.space.hoveredEraseTarget?.nodeVisual === this;
-        ctx.strokeStyle = isEraseTarget ? "#EF4444" :
+        ctx.strokeStyle = isEraseTarget ? "#EF4444" : isSlotNode ? FUNCTION_COL :
             isControlNode ? START_NODE_COL : STROKE_COL;
-        ctx.lineWidth = isEraseTarget ? cam.zoom*3 : cam.zoom*2;
+        ctx.lineWidth = isEraseTarget || isSelectedFunctionSlot ? cam.zoom*3 : isSlotNode ? cam.zoom*2.5 : cam.zoom*2;
         ctx.stroke();
         ctx.fillStyle = NODE_TEXT_COL;
         ctx.font = (cam.zoom*16)+"px Helvetica";
@@ -909,6 +1282,9 @@ class NodeVisual{
         ctx.textBaseline = "middle"
         const maxLabelWidth = (this.size.x - 8) * cam.zoom;
         let nodeLabel = this.node.name;
+        if(this.node instanceof DataSlotNode || this.node instanceof ControlSlotNode){
+            nodeLabel = this.node.getPortName();
+        }
         if(this.node instanceof StringNode){
             const escapedCharacters = Array.from(this.node.valueSlot.value, character =>
                 JSON.stringify(character).slice(1, -1)

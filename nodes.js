@@ -472,7 +472,7 @@ class PromptNode extends Node{
         this.valueSlot.value = value ?? "";
         this.resetCachedDependents(this.valueSlot);
         for(const connectedSlot of [...this.controlOutputSlot.connectedSlots]){
-            connectedSlot.node.execute();
+            connectedSlot.node.execute(connectedSlot);
         }
     }
 }
@@ -492,7 +492,7 @@ class PrintNode extends Node{
         console.log(value);
         window.alert(value);
         for(let connectedSlot of [...this.controlOutputSlot.connectedSlots]){
-            connectedSlot.node.execute();
+            connectedSlot.node.execute(connectedSlot);
         }
     }
 }
@@ -512,11 +512,11 @@ class SplitNode extends Node{
         if(value === null) return;
         if(value){
             for(let connectedSlot of [...this.trueOutputSlot.connectedSlots]){
-                connectedSlot.node.execute();
+                connectedSlot.node.execute(connectedSlot);
             }
         } else {
             for(let connectedSlot of [...this.falseOutputSlot.connectedSlots]){
-                connectedSlot.node.execute();
+                connectedSlot.node.execute(connectedSlot);
             }
         }
     }
@@ -570,9 +570,212 @@ class ForceComputeNode extends Node{
         this.valueOutputSlot.value = null;
         this.computeData();
         for(const connectedSlot of [...this.controlOutputSlot.connectedSlots]){
-            connectedSlot.node.execute();
+            connectedSlot.node.execute(connectedSlot);
         }
     }
+}
+
+const USER_FUNCTION_DEFINITIONS = new Map();
+
+class DataSlotNode extends Node{
+    static displayName = "Data slot";
+    constructor(name = "slot"){
+        super();
+        this.name = name;
+        this.valueType = new TypeVariable("T");
+        this.valueInputSlot = new Slot(this, this.valueType, DIRECTIONS.INPUT);
+        this.valueOutputSlot = new Slot(this, this.valueType, DIRECTIONS.OUTPUT);
+        this.boundaryPortId = null;
+        this.boundaryDirection = null;
+        this.runtimeContext = null;
+        this.isBoundInput = false;
+        this.boundValue = null;
+        this.slots = [this.valueInputSlot, this.valueOutputSlot];
+    }
+    computeData(){
+        if(this.isBoundInput){
+            this.valueOutputSlot.value = this.boundValue;
+            return;
+        }
+        this.valueOutputSlot.value = this.valueInputSlot.getValue();
+    }
+    resetCachedValues(){
+        super.resetCachedValues();
+        if(this.boundaryDirection === "output") this.runtimeContext?.resetOutput(this.boundaryPortId);
+    }
+    getPortName(){
+        return this.name;
+    }
+}
+
+class ControlSlotNode extends Node{
+    static displayName = "Control slot";
+    constructor(name = "slot"){
+        super();
+        this.name = name;
+        this.controlInputSlot = new Slot(this, ControlType, DIRECTIONS.INPUT);
+        this.controlOutputSlot = new Slot(this, ControlType, DIRECTIONS.OUTPUT);
+        this.boundaryPortId = null;
+        this.boundaryDirection = null;
+        this.runtimeContext = null;
+        this.slots = [this.controlInputSlot, this.controlOutputSlot];
+    }
+    getPortName(){
+        return this.name;
+    }
+    execute(){
+        if(this.boundaryDirection === "output"){
+            this.runtimeContext?.forwardControl(this.boundaryPortId);
+            return;
+        }
+        for(const connectedSlot of [...this.controlOutputSlot.connectedSlots]){
+            connectedSlot.node.execute(connectedSlot);
+        }
+    }
+}
+
+class UserFunctionNode extends Node{
+    constructor(functionId){
+        super();
+        this.functionId = functionId;
+        this.runtimeFrame = null;
+        this.name = USER_FUNCTION_DEFINITIONS.get(functionId)?.name || "function";
+        this.rebuildSlots();
+    }
+    rebuildSlots(){
+        const definition = USER_FUNCTION_DEFINITIONS.get(this.functionId);
+        if(!definition) return;
+        this.name = definition.name;
+        const variables = new Map();
+        this.slots = definition.ports.map(port => {
+            let type = port.type;
+            if(type instanceof TypeVariable){
+                if(!variables.has(port.typeVariableName || type.name)){
+                    variables.set(port.typeVariableName || type.name, new TypeVariable(port.typeVariableName || type.name));
+                }
+                type = variables.get(port.typeVariableName || type.name);
+            }
+            return new Slot(this, type, port.direction === "input" ? DIRECTIONS.INPUT : DIRECTIONS.OUTPUT, port.name || null);
+        });
+    }
+    getRuntimeFrame(){
+        const definition = USER_FUNCTION_DEFINITIONS.get(this.functionId);
+        if(!definition) throw new Error(`Missing function definition ${this.functionId}.`);
+        if(!this.runtimeFrame) this.runtimeFrame = cloneFunctionFrame(definition);
+        return this.runtimeFrame;
+    }
+    resetCachedValues(){
+        this.runtimeFrame = null;
+        super.resetCachedValues();
+    }
+    bindDataInputs(frame){
+        const definition = USER_FUNCTION_DEFINITIONS.get(this.functionId);
+        definition.ports.forEach((port, index) => {
+            if(port.direction !== "input" || port.type === ControlType) return;
+            const boundary = frame.boundaries.get(port.id);
+            if(boundary instanceof DataSlotNode){
+                boundary.isBoundInput = true;
+                boundary.boundValue = this.slots[index].getValue();
+            }
+        });
+    }
+    attachRuntimeContext(frame){
+        const definition = USER_FUNCTION_DEFINITIONS.get(this.functionId);
+        const context = {
+            forwardControl: portId => {
+                const index = definition.ports.findIndex(port => port.id === portId);
+                for(const connectedSlot of [...this.slots[index].connectedSlots]) connectedSlot.node.execute(connectedSlot);
+            },
+            resetOutput: portId => {
+                const index = definition.ports.findIndex(port => port.id === portId);
+                const outputSlot = this.slots[index];
+                if(!outputSlot) return;
+                outputSlot.value = null;
+                this.resetCachedDependents(outputSlot);
+            }
+        };
+        for(const boundary of frame.boundaries.values()){
+            boundary.runtimeContext = context;
+        }
+    }
+    computeData(){
+        const definition = USER_FUNCTION_DEFINITIONS.get(this.functionId);
+        if(!definition) return;
+        const frame = this.getRuntimeFrame();
+        this.attachRuntimeContext(frame);
+        this.bindDataInputs(frame);
+        definition.ports.forEach((port, index) => {
+            if(port.direction !== "output" || port.type === ControlType) return;
+            const boundary = frame.boundaries.get(port.id);
+            const value = boundary?.valueInputSlot.getValue() ?? null;
+            this.slots[index].value = value;
+        });
+    }
+    execute(inputSlot = null){
+        const definition = USER_FUNCTION_DEFINITIONS.get(this.functionId);
+        if(!definition) return;
+        const frame = this.getRuntimeFrame();
+        this.bindDataInputs(frame);
+        this.attachRuntimeContext(frame);
+        const inputIndex = inputSlot ? this.slots.indexOf(inputSlot) : -1;
+        definition.ports.forEach((port, index) => {
+            if(port.direction !== "input" || port.type !== ControlType) return;
+            if(inputSlot && index !== inputIndex) return;
+            frame.boundaries.get(port.id)?.execute();
+        });
+    }
+}
+
+class FunctionDefinition{
+    constructor(id, name, nodes, ports, bounds, visuals){
+        this.id = id;
+        this.name = name;
+        this.nodes = nodes;
+        this.ports = ports;
+        this.bounds = bounds;
+        this.visuals = visuals;
+    }
+}
+
+function cloneFunctionFrame(definition){
+    const nodes = [];
+    const boundaries = new Map();
+    const originals = definition.nodes;
+    const mapping = new Map();
+    for(const original of originals){
+        let clone;
+        if(original instanceof NumberNode) clone = new NumberNode(original.valueSlot.value);
+        else if(original instanceof StringNode) clone = new StringNode(original.valueSlot.value);
+        else if(original instanceof DataSlotNode){
+            clone = new DataSlotNode(original.name);
+            clone.boundaryDirection = original.boundaryDirection;
+            clone.boundaryPortId = original.boundaryPortId;
+            if(original.boundaryPortId) boundaries.set(original.boundaryPortId, clone);
+        } else if(original instanceof ControlSlotNode){
+            clone = new ControlSlotNode(original.name);
+            clone.boundaryDirection = original.boundaryDirection;
+            clone.boundaryPortId = original.boundaryPortId;
+            if(original.boundaryPortId) boundaries.set(original.boundaryPortId, clone);
+        } else if(original instanceof UserFunctionNode){
+            clone = new UserFunctionNode(original.functionId);
+        } else {
+            clone = new original.constructor();
+        }
+        mapping.set(original, clone);
+        nodes.push(clone);
+    }
+    for(const original of originals){
+        const clone = mapping.get(original);
+        for(const slot of original.slots){
+            if(slot.direction !== DIRECTIONS.OUTPUT) continue;
+            const cloneSlot = clone.slots[original.slots.indexOf(slot)];
+            for(const target of slot.connectedSlots){
+                const targetSlot = mapping.get(target.node)?.slots[target.node.slots.indexOf(target)];
+                if(targetSlot) cloneSlot.connect(targetSlot);
+            }
+        }
+    }
+    return {nodes, boundaries};
 }
 
 class StartNode extends Node{
@@ -600,7 +803,7 @@ class StartNode extends Node{
     execute(){
         this.resetConnectedGraphCachedValues();
         for(let connectedSlot of [...this.controlOutputSlot.connectedSlots]){
-            connectedSlot.node.execute();
+            connectedSlot.node.execute(connectedSlot);
         }
     }
 }
@@ -622,7 +825,9 @@ const NODE_TYPES = [
     PrintNode,
     SplitNode,
     ChooseNode,
-    ForceComputeNode
+    ForceComputeNode,
+    DataSlotNode,
+    ControlSlotNode
 ];
 
 function serializeModel(nodes){
@@ -632,6 +837,12 @@ function serializeModel(nodes){
         if(node instanceof NumberNode || node instanceof StringNode){
             record.value = node.valueSlot.value;
         }
+        if(node instanceof DataSlotNode || node instanceof ControlSlotNode){
+            record.name = node.name;
+            record.boundaryPortId = node.boundaryPortId;
+            record.boundaryDirection = node.boundaryDirection;
+        }
+        if(node instanceof UserFunctionNode) record.functionId = node.functionId;
         return record;
     });
     const connections = [];
@@ -655,12 +866,12 @@ function serializeModel(nodes){
     return {version: 1, nodes: serializedNodes, connections};
 }
 
-function deserializeModel(modelData){
+function deserializeModel(modelData, {requireStart = true} = {}){
     if(modelData?.version !== 1 || !Array.isArray(modelData.nodes) ||
        !Array.isArray(modelData.connections)){
         throw new Error("Program file contains invalid model data.");
     }
-    const constructors = new Map([...NODE_TYPES, StartNode].map(NodeType => [NodeType.name, NodeType]));
+    const constructors = new Map([...NODE_TYPES, StartNode, UserFunctionNode].map(NodeType => [NodeType.name, NodeType]));
     const nodesById = new Map();
     const nodeIdsByNode = new Map();
     const nodes = modelData.nodes.map((record, index) => {
@@ -676,6 +887,15 @@ function deserializeModel(modelData){
         } else if(NodeType === StringNode){
             if(typeof record.value !== "string") throw new Error("Program file contains an invalid string node.");
             node = new StringNode(record.value);
+        } else if(NodeType === DataSlotNode || NodeType === ControlSlotNode){
+            node = new NodeType(typeof record.name === "string" ? record.name : "slot");
+            node.boundaryPortId = record.boundaryPortId || null;
+            node.boundaryDirection = record.boundaryDirection || null;
+        } else if(NodeType === UserFunctionNode){
+            if(typeof record.functionId !== "string" || !USER_FUNCTION_DEFINITIONS.has(record.functionId)){
+                throw new Error("Program file contains a function node with a missing definition.");
+            }
+            node = new UserFunctionNode(record.functionId);
         } else {
             node = new NodeType();
         }
@@ -683,7 +903,7 @@ function deserializeModel(modelData){
         nodeIdsByNode.set(node, id);
         return node;
     });
-    if(nodes.filter(node => node instanceof StartNode).length !== 1){
+    if(requireStart && nodes.filter(node => node instanceof StartNode).length !== 1){
         throw new Error("A program must contain exactly one start node.");
     }
 
@@ -707,5 +927,68 @@ function deserializeModel(modelData){
         }
     }
     return {nodes, nodesById, nodeIdsByNode};
+}
+
+function serializeFunctionDefinitions(){
+    return [...USER_FUNCTION_DEFINITIONS.values()].map(definition => ({
+        id: definition.id,
+        name: definition.name,
+        ports: definition.ports.map(port => ({
+            id: port.id,
+            name: port.name,
+            direction: port.direction,
+            type: port.type === ControlType ? "control" : port.type instanceof TypeVariable ? "type-variable" :
+                port.type === NumberType ? "number" : port.type === StringType ? "string" : "bool",
+            typeVariableName: port.type instanceof TypeVariable ? port.type.name : null
+        })),
+        model: serializeModel(definition.nodes)
+    }));
+}
+
+function serializeFunctionDefinitionVisuals(){
+    return [...USER_FUNCTION_DEFINITIONS.values()].map(definition => ({
+        id: definition.id,
+        bounds: definition.bounds,
+        nodes: definition.visuals.nodes
+    }));
+}
+
+function deserializeFunctionDefinitions(records, visualRecords = []){
+    USER_FUNCTION_DEFINITIONS.clear();
+    if(records === undefined) return;
+    if(!Array.isArray(records)) throw new Error("Program file contains invalid function definitions.");
+    const visualsById = new Map((Array.isArray(visualRecords) ? visualRecords : []).map(record => [record.id, record]));
+    for(const record of records){
+        if(typeof record?.id !== "string" || USER_FUNCTION_DEFINITIONS.has(record.id) ||
+           typeof record.name !== "string" || !Array.isArray(record.ports)){
+            throw new Error("Program file contains an invalid function definition.");
+        }
+        const visual = visualsById.get(record.id);
+        if(!visual?.bounds || ![visual.bounds.left, visual.bounds.right, visual.bounds.top, visual.bounds.bottom].every(Number.isFinite)){
+            throw new Error("Program file contains invalid function frame visuals.");
+        }
+        USER_FUNCTION_DEFINITIONS.set(record.id, new FunctionDefinition(record.id, record.name, [], [], visual.bounds, visual));
+    }
+    for(const record of records){
+        const definition = USER_FUNCTION_DEFINITIONS.get(record.id);
+        definition.ports = record.ports.map(port => {
+            const type = port.type === "control" ? ControlType :
+                port.type === "type-variable" ? new TypeVariable(port.typeVariableName || "T") :
+                {number: NumberType, string: StringType, bool: BoolType}[port.type];
+            if(!type || typeof port.id !== "string" || !["input", "output"].includes(port.direction)){
+                throw new Error("Program file contains an invalid function port.");
+            }
+            return {id: port.id, name: typeof port.name === "string" ? port.name : "slot", direction: port.direction, type,
+                typeVariableName: type instanceof TypeVariable ? type.name : null};
+        });
+    }
+    for(const record of records){
+        const definition = USER_FUNCTION_DEFINITIONS.get(record.id);
+        const model = deserializeModel(record.model, {requireStart: false});
+        definition.nodes = model.nodes;
+        if(!definition.visuals || !Array.isArray(definition.visuals.nodes) || definition.visuals.nodes.length !== model.nodes.length){
+            throw new Error("Program file contains invalid function visuals.");
+        }
+    }
 }
 
