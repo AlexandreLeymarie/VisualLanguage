@@ -168,6 +168,57 @@ class Space{
         }
         return null;
     }
+    getFunctionDefinitionTitleAt(screenPosition){
+        for(let i = this.functionDefinitionVisuals.length - 1; i >= 0; i--){
+            const {definition} = this.functionDefinitionVisuals[i];
+            const topLeft = worldToCanvas(vec(definition.bounds.left, definition.bounds.top), this.cam);
+            const fontSize = 15 * this.cam.zoom;
+            ctx.save();
+            ctx.font = `bold ${fontSize}px Helvetica`;
+            const width = ctx.measureText(definition.name).width;
+            ctx.restore();
+            const titleX = topLeft.x + 14 * this.cam.zoom;
+            const titleY = topLeft.y + 12 * this.cam.zoom;
+            if(screenPosition.x >= titleX - 5 * this.cam.zoom &&
+               screenPosition.x <= titleX + width + 5 * this.cam.zoom &&
+               screenPosition.y >= titleY - 3 * this.cam.zoom &&
+               screenPosition.y <= titleY + 19 * this.cam.zoom){
+                return this.functionDefinitionVisuals[i];
+            }
+        }
+        return null;
+    }
+    editFunctionName(group){
+        const name = window.prompt("Edit function name:", group.definition.name);
+        if(name === null || name.trim() === "") return;
+        group.definition.name = name.trim();
+        for(const visual of this.getAllNodeVisuals()){
+            if(visual.node instanceof UserFunctionNode && visual.node.functionId === group.definition.id){
+                visual.node.name = group.definition.name;
+            }
+        }
+        this.refreshNodeTypes();
+    }
+    editSlotName(node){
+        const name = window.prompt("Edit slot name:", node.getPortName());
+        if(name === null) return;
+        node.name = name.trim();
+        if(node.boundaryPortId){
+            for(const definition of USER_FUNCTION_DEFINITIONS.values()){
+                const port = definition.ports.find(candidate => candidate.id === node.boundaryPortId);
+                if(!port) continue;
+                port.name = node.name;
+                for(const visual of this.getAllNodeVisuals()){
+                    if(visual.node instanceof UserFunctionNode && visual.node.functionId === definition.id){
+                        visual.node.slots.forEach((slot, index) => {
+                            if(definition.ports[index] === port) slot.name = port.name || null;
+                        });
+                    }
+                }
+                break;
+            }
+        }
+    }
     getDefinitionVisualRecords(nodes, visualByNode){
         return nodes.map((node, nodeId) => {
             const visual = visualByNode.get(node);
@@ -263,7 +314,7 @@ class Space{
             if(type instanceof TypeVariable){
                 type = new TypeVariable(`T${index + 1}`);
             }
-            return {id: portId, name: port.name || `slot ${index + 1}`, direction: port.direction, type,
+            return {id: portId, name: port.name, direction: port.direction, type,
                 typeVariableName: type instanceof TypeVariable ? type.name : null};
         });
         const bounds = {
@@ -808,6 +859,23 @@ class Space{
             event.preventDefault();
             return;
         }
+        const functionTitle = this.getFunctionDefinitionTitleAt(screenPosition);
+        if(functionTitle !== null){
+            this.editFunctionName(functionTitle);
+            event.preventDefault();
+            return;
+        }
+        const hitNodeVisual = this.getNodeVisualAt(pointerPosition);
+        const slotNameHalfWidth = 28;
+        const slotNameHalfHeight = 10;
+        const hitNodeLabel = hitNodeVisual !== null &&
+            Math.abs(pointerPosition.x - hitNodeVisual.pos.x) <= slotNameHalfWidth &&
+            Math.abs(pointerPosition.y - hitNodeVisual.pos.y) <= slotNameHalfHeight;
+        if(hitNodeLabel && (hitNodeVisual.node instanceof DataSlotNode || hitNodeVisual.node instanceof ControlSlotNode)){
+            this.editSlotName(hitNodeVisual.node);
+            event.preventDefault();
+            return;
+        }
         if(!this.isPointerOverNode(pointerPosition)){
             const directlyHitSlot = this.getSlotVisualAt(
                 pointerPosition,
@@ -952,6 +1020,15 @@ class Space{
                 );
                 if(group !== undefined) this.updateFunctionDefinitionBounds(group);
             }
+            return;
+        }
+        const hoveredSlotNameNode = this.getNodeVisualAt(this.pointerWorldPosition);
+        const isHoveringSlotName = hoveredSlotNameNode !== null &&
+            (hoveredSlotNameNode.node instanceof DataSlotNode || hoveredSlotNameNode.node instanceof ControlSlotNode) &&
+            Math.abs(this.pointerWorldPosition.x - hoveredSlotNameNode.pos.x) <= 28 &&
+            Math.abs(this.pointerWorldPosition.y - hoveredSlotNameNode.pos.y) <= 10;
+        if(isHoveringSlotName || this.getFunctionDefinitionTitleAt(screenPosition) !== null){
+            cv.style.cursor = "pointer";
             return;
         }
         if(this.getFunctionDefinitionAt(this.pointerWorldPosition) !== null){
@@ -1187,6 +1264,28 @@ class Space{
             ctx.font = `bold ${15 * this.cam.zoom}px Helvetica`;
             ctx.textAlign = "left";
             ctx.textBaseline = "top";
+            const titleX = topLeft.x + 14 * this.cam.zoom;
+            const titleY = topLeft.y + 12 * this.cam.zoom;
+            const titleWidth = ctx.measureText(definition.name).width;
+            const pointer = this.pointerWorldPosition === null
+                ? null
+                : worldToCanvas(this.pointerWorldPosition, this.cam);
+            const isNameHovered = pointer !== null &&
+                pointer.x >= titleX - 5 * this.cam.zoom &&
+                pointer.x <= titleX + titleWidth + 5 * this.cam.zoom &&
+                pointer.y >= titleY - 3 * this.cam.zoom &&
+                pointer.y <= titleY + 19 * this.cam.zoom;
+            ctx.beginPath();
+            ctx.roundRect(titleX - 5 * this.cam.zoom, titleY - 3 * this.cam.zoom,
+                titleWidth + 10 * this.cam.zoom, 22 * this.cam.zoom, 5 * this.cam.zoom);
+            ctx.fillStyle = isNameHovered ? "#744464" : "#5A3550";
+            ctx.fill();
+            if(isNameHovered){
+                ctx.strokeStyle = FUNCTION_COL;
+                ctx.lineWidth = Math.max(1, this.cam.zoom);
+                ctx.stroke();
+            }
+            ctx.fillStyle = FUNCTION_COL;
             ctx.fillText(definition.name, topLeft.x + 14 * this.cam.zoom, topLeft.y + 12 * this.cam.zoom);
             ctx.restore();
         }
@@ -1301,7 +1400,40 @@ class NodeVisual{
                 nodeLabel = `"${shortenedContent}..."`;
             }
         }
-        ctx.fillText(nodeLabel, centerSp.x, centerSp.y, maxLabelWidth);
+        if(isSlotNode){
+            ctx.font = `bold ${15 * cam.zoom}px Helvetica`;
+            const labelWidth = (this.size.x - 8) * cam.zoom;
+            const labelHeight = 20 * cam.zoom;
+            const labelX = centerSp.x - labelWidth/2;
+            const labelY = centerSp.y - labelHeight/2;
+            const pointer = this.space.pointerWorldPosition;
+            const isNameHovered = pointer !== null &&
+                Math.abs(pointer.x - this.pos.x) <= (this.size.x - 8) / 2 &&
+                Math.abs(pointer.y - this.pos.y) <= 10;
+            let displayedName = nodeLabel;
+            const ellipsis = "...";
+            if(ctx.measureText(displayedName).width > labelWidth - 8 * cam.zoom){
+                const characters = Array.from(displayedName);
+                while(characters.length > 0 &&
+                      ctx.measureText(`${characters.join("")}${ellipsis}`).width > labelWidth - 8 * cam.zoom){
+                    characters.pop();
+                }
+                displayedName = `${characters.join("")}${ellipsis}`;
+            }
+            ctx.beginPath();
+            ctx.roundRect(labelX, labelY, labelWidth, labelHeight, 5 * cam.zoom);
+            ctx.fillStyle = isNameHovered ? "#744464" : "#5A3550";
+            ctx.fill();
+            if(isNameHovered){
+                ctx.strokeStyle = FUNCTION_COL;
+                ctx.lineWidth = Math.max(1, cam.zoom);
+                ctx.stroke();
+            }
+            ctx.fillStyle = FUNCTION_COL;
+            ctx.fillText(displayedName, centerSp.x, centerSp.y);
+        } else {
+            ctx.fillText(nodeLabel, centerSp.x, centerSp.y, maxLabelWidth);
+        }
         for(let slotVisual of this.sloteVisuals){
             slotVisual.draw(cam);
         }

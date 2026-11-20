@@ -579,7 +579,7 @@ const USER_FUNCTION_DEFINITIONS = new Map();
 
 class DataSlotNode extends Node{
     static displayName = "Data slot";
-    constructor(name = "slot"){
+    constructor(name = ""){
         super();
         this.name = name;
         this.valueType = new TypeVariable("T");
@@ -610,7 +610,7 @@ class DataSlotNode extends Node{
 
 class ControlSlotNode extends Node{
     static displayName = "Control slot";
-    constructor(name = "slot"){
+    constructor(name = ""){
         super();
         this.name = name;
         this.controlInputSlot = new Slot(this, ControlType, DIRECTIONS.INPUT);
@@ -978,7 +978,7 @@ function deserializeFunctionDefinitions(records, visualRecords = []){
             if(!type || typeof port.id !== "string" || !["input", "output"].includes(port.direction)){
                 throw new Error("Program file contains an invalid function port.");
             }
-            return {id: port.id, name: typeof port.name === "string" ? port.name : "slot", direction: port.direction, type,
+            return {id: port.id, name: typeof port.name === "string" ? port.name : "", direction: port.direction, type,
                 typeVariableName: type instanceof TypeVariable ? type.name : null};
         });
     }
