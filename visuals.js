@@ -556,11 +556,12 @@ class Space{
         ctx.textAlign = "left";
         for(let i = 0; i < this.nodeTypes.length; i++){
             const rowTop = menuY + 6 + i * rowHeight;
+            const isUserFunction = Boolean(this.nodeTypes[i].functionId);
             if(this.hoveredPickerItem === i){
-                ctx.fillStyle = "#293D59";
+                ctx.fillStyle = isUserFunction ? "#493044" : "#293D59";
                 ctx.fillRect(x + 6, rowTop, menuWidth - 12, rowHeight);
             }
-            ctx.fillStyle = SLOT_TEXT_COL;
+            ctx.fillStyle = isUserFunction ? FUNCTION_COL : SLOT_TEXT_COL;
             ctx.fillText(this.nodeTypes[i].name, x + 12, rowTop + rowHeight/2);
         }
         ctx.restore();
