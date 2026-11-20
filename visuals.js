@@ -1368,14 +1368,37 @@ class NodeVisual{
         const isControlNode = this.node.slots.some(slot => slot.type === ControlType);
         const isSlotNode = this.node instanceof DataSlotNode || this.node instanceof ControlSlotNode;
         const isSelectedFunctionSlot = this.space.selectedFunctionSlots?.has(this.node);
-        ctx.fillStyle = isSlotNode ? "#48293D" : isControlNode ? CONTROL_NODE_BACKGROUND_COL : NODE_BACKGROUND_COL;
+        ctx.fillStyle = isSelectedFunctionSlot ? "#70405D" :
+            isSlotNode ? "#48293D" : isControlNode ? CONTROL_NODE_BACKGROUND_COL : NODE_BACKGROUND_COL;
         ctx.fill();
         const isEraseTarget = this.space.eraserMode &&
             this.space.hoveredEraseTarget?.nodeVisual === this;
-        ctx.strokeStyle = isEraseTarget ? "#EF4444" : isSlotNode ? FUNCTION_COL :
+        ctx.strokeStyle = isEraseTarget ? "#EF4444" : isSelectedFunctionSlot ? "#FFC1DF" : isSlotNode ? FUNCTION_COL :
             isControlNode ? START_NODE_COL : STROKE_COL;
-        ctx.lineWidth = isEraseTarget || isSelectedFunctionSlot ? cam.zoom*3 : isSlotNode ? cam.zoom*2.5 : cam.zoom*2;
+        ctx.lineWidth = isEraseTarget ? cam.zoom*3 : isSelectedFunctionSlot ? cam.zoom*4 : isSlotNode ? cam.zoom*2.5 : cam.zoom*2;
         ctx.stroke();
+        if(isSelectedFunctionSlot){
+            ctx.save();
+            const badgeCenter = vec(cornerSp.x + (this.size.x - 12) * cam.zoom,
+                cornerSp.y + 12 * cam.zoom);
+            ctx.beginPath();
+            ctx.arc(badgeCenter.x, badgeCenter.y, 8 * cam.zoom, 0, Math.PI * 2);
+            ctx.fillStyle = "#FFC1DF";
+            ctx.fill();
+            ctx.strokeStyle = "#48293D";
+            ctx.lineWidth = Math.max(1, 1.5 * cam.zoom);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(badgeCenter.x - 3.5 * cam.zoom, badgeCenter.y);
+            ctx.lineTo(badgeCenter.x - 1 * cam.zoom, badgeCenter.y + 2.5 * cam.zoom);
+            ctx.lineTo(badgeCenter.x + 3.5 * cam.zoom, badgeCenter.y - 3 * cam.zoom);
+            ctx.strokeStyle = "#48293D";
+            ctx.lineWidth = Math.max(1, 2 * cam.zoom);
+            ctx.lineCap = "round";
+            ctx.lineJoin = "round";
+            ctx.stroke();
+            ctx.restore();
+        }
         ctx.fillStyle = NODE_TEXT_COL;
         ctx.font = (cam.zoom*16)+"px Helvetica";
         ctx.textAlign = "center";
