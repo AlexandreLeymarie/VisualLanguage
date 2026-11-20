@@ -1363,7 +1363,8 @@ class SlotVisual{
         const outerPosition = this.getOuterPosition();
         if(this.slot.direction !== DIRECTIONS.OUTPUT || this.slot.type === ControlType) return outerPosition;
         const outward = vec(Math.cos(this.getFacingAngle()), Math.sin(this.getFacingAngle()));
-        return outerPosition.sub(outward.mul(this.radius + 2));
+        // Keep the output semicircle's flat edge just clear of the node outline.
+        return outerPosition.sub(outward.mul(this.radius));
     }
     getFacingAngle(){
         const offset = this.radius + 2;
